@@ -1,0 +1,16 @@
+ARG GO_IMAGE=docker.io/golang-buster
+
+FROM ${GO_IMAGE}
+
+WORKDIR /go/src/github.com/digitalocean/flipop
+
+ENV GOPATH /go
+COPY . /go/src/github.com/digitalocean/flipop
+
+RUN go mod download
+
+# k8s.io/code-generator 
+RUN cd /go && \
+  (GO111MODULE=off go get k8s.io/code-generator || true) && \
+  cd /go/src/k8s.io/code-generator && \
+  git checkout v0.17.3

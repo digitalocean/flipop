@@ -1,0 +1,14 @@
+apiVersion: flipop.digitalocean.com/v1alpha1
+kind: FloatingIPPool
+metadata:
+  name: ingress-pool
+spec: 
+  provider: digitalocean
+  region: nyc3
+  ips:
+  - 138.197.61.98
+  - 165.227.248.163
+  match:
+    podNamespace: ingress
+    podLabel: app=nginx-ingress,component=controller
+    nodeLabel: doks.digitalocean.com/node-pool=work
