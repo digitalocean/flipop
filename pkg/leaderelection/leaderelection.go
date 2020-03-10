@@ -17,7 +17,7 @@ import (
 // LeaderElection runs the "run" command when it is the leader, and terminates it when it is not.
 func LeaderElection(
 	ctx context.Context,
-	ll logrus.FieldLogger,
+	log logrus.FieldLogger,
 	namespace string,
 	resourceName string,
 	client kubernetes.Interface,
@@ -35,7 +35,7 @@ func LeaderElection(
 	defer leaderCancel()
 	go func() {
 		<-ctx.Done()
-		ll.Debug("leaderelection canceled context; waiting for children")
+		log.Debug("leaderelection canceled context; waiting for children")
 		childLock.Lock()
 		if childCtx != nil {
 			childCancel()

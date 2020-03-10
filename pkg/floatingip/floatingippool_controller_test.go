@@ -236,7 +236,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 
 			assignIPCalls := 0
 
-			ll := log.NewTestLogger(t)
+			log := log.NewTestLogger(t)
 			c := &Controller{
 				kubeCS:   kubeCSFake.NewSimpleClientset(kt.AsRuntimeObjects(tc.objs)...),
 				flipopCS: flipCSFake.NewSimpleClientset(k8s),
@@ -260,7 +260,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				},
 				pools: make(map[string]floatingIPPool),
 				ctx:   ctx,
-				ll:    ll,
+				log:    log,
 			}
 			c.updateOrAdd(k8s)
 			if tc.expectError != "" {

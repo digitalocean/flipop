@@ -44,7 +44,7 @@ type Controller struct {
 
 	nodeNameToNode map[string]*node
 
-	ll           logrus.FieldLogger
+	log           logrus.FieldLogger
 	kubeCS       kubernetes.Interface
 	nodeInformer cache.SharedIndexInformer
 
@@ -62,9 +62,9 @@ type Controller struct {
 }
 
 // NewController builds a new node match Controller.
-func NewController(ll logrus.FieldLogger, kubeCS kubernetes.Interface, action NodeEnableDisabler) *Controller {
+func NewController(log logrus.FieldLogger, kubeCS kubernetes.Interface, action NodeEnableDisabler) *Controller {
 	m := &Controller{
-		ll:             ll,
+		log:             log,
 		kubeCS:         kubeCS,
 		action:         action,
 		nodeNameToNode: make(map[string]*node),
@@ -105,7 +105,7 @@ func (m *Controller) SetCriteria(match *flipopv1alpha1.Match) {
 	if m.match.NodeLabel != "" {
 		m.nodeSelector, err = labels.Parse(m.match.NodeLabel)
 		if err != nil { // This shouldn't happen if the caller used validateMatch
-			m.ll.WithError(err).Error("parsing node selector")
+			m.log.WithError(err).Error("parsing node selector")
 			m.match = nil
 			return
 		}
@@ -115,12 +115,12 @@ func (m *Controller) SetCriteria(match *flipopv1alpha1.Match) {
 	if m.match.PodLabel != "" {
 		m.podSelector, err = labels.Parse(m.match.PodLabel)
 		if err != nil {
-			m.ll.WithError(err).Error("parsing pod selector")
+			m.log.WithError(err).Error("parsing pod selector")
 			m.match = nil
 			return
 		}
 	}
-	m.ll.Info("match criteria updated")
+	m.log.Info("match criteria updated")
 	return
 }
 
@@ -138,7 +138,7 @@ func (m *Controller) run() {
 	if m.match == nil {
 		// The only way this should happen is if SetCriteria was never called, or a match criteria
 		// passed validation with ValidateMatch, but then failed SetCriteria.
-		m.ll.Warn("no match criteria set; cannot reconcile")
+		m.log.Warn("no match criteria set; cannot reconcile")
 		return
 	}
 	// This does NOT use shared informers which CAN consume more memory and Kubernetes API
@@ -195,9 +195,9 @@ func (m *Controller) run() {
 		if m.ctx.Err() != nil {
 			// We don't know why the context was canceled, but this can be a normal error if the
 			// FloatingIPPool spec changed during initialization.
-			m.ll.WithError(m.ctx.Err()).Error("failed to sync dependencies; maybe spec changed")
+			m.log.WithError(m.ctx.Err()).Error("failed to sync dependencies; maybe spec changed")
 		} else {
-			m.ll.Error("failed to sync dependencies")
+			m.log.Error("failed to sync dependencies")
 		}
 		return
 	}
@@ -206,12 +206,12 @@ func (m *Controller) run() {
 	for _, o := range m.nodeInformer.GetStore().List() {
 		k8sNode, ok := o.(*corev1.Node)
 		if !ok {
-			m.ll.Error("node informer store produced non-node")
+			m.log.Error("node informer store produced non-node")
 			continue
 		}
 		err := m.updateNode(m.ctx, k8sNode)
 		if err != nil {
-			m.ll.WithError(err).Error("updating node")
+			m.log.WithError(err).Error("updating node")
 		}
 	}
 	m.Lock()
@@ -258,26 +258,26 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 		return nil
 	}
 	providerID := k8sNode.Spec.ProviderID
-	ll := m.ll.WithFields(logrus.Fields{"node": k8sNode.Name, "node_provider_id": providerID})
+	log := m.log.WithFields(logrus.Fields{"node": k8sNode.Name, "node_provider_id": providerID})
 	n, ok := m.nodeNameToNode[k8sNode.Name]
 	if !ok {
 		if providerID == "" {
-			ll.Info("node has no provider id, ignoring")
+			log.Info("node has no provider id, ignoring")
 			return nil
 		}
 		n = newNode(k8sNode)
 		m.nodeNameToNode[n.getName()] = n
-		ll.Info("new node")
+		log.Info("new node")
 	} else {
 		n.k8sNode = k8sNode
-		ll.Debug("node updated")
+		log.Debug("node updated")
 	}
 
 	var oldNodeMatch = n.isNodeMatch
 	n.isNodeMatch = m.isNodeMatch(n)
 
 	if oldNodeMatch == n.isNodeMatch {
-		ll.Debug("node match unchanged")
+		log.Debug("node match unchanged")
 		return nil
 	}
 
@@ -297,13 +297,13 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 			}
 			return nil // updatePod will enable the node if appropriate
 		}
-		ll.Info("enabling node")
+		log.Info("enabling node")
 		n.enabled = true
 		if m.primed {
 			m.action.EnableNodes(n.k8sNode)
 		}
 	} else {
-		ll.Info("disabling node")
+		log.Info("disabling node")
 		n.enabled = false
 		// This should be idempotent, so we don't need to care if we're primed yet.
 		m.action.DisableNodes(n.k8sNode)
@@ -312,42 +312,42 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 }
 
 func (m *Controller) updatePod(pod *corev1.Pod) error {
-	ll := m.ll.WithFields(logrus.Fields{"pod": pod.Name, "pod_namespace": pod.Namespace})
+	log := m.log.WithFields(logrus.Fields{"pod": pod.Name, "pod_namespace": pod.Namespace})
 	if pod.Spec.NodeName == "" {
 		// This pod hasn't been assigned to a node. Once a pod is assigned to a node, it cannot be
 		// unassigned.
-		ll.Debug("ignoring unscheduled pod")
+		log.Debug("ignoring unscheduled pod")
 		return nil
 	}
 	if !pod.ObjectMeta.DeletionTimestamp.IsZero() {
 		m.deletePod(pod)
 		return nil
 	}
-	ll = ll.WithField("node", pod.Spec.NodeName)
+	log = log.WithField("node", pod.Spec.NodeName)
 	n, ok := m.nodeNameToNode[pod.Spec.NodeName]
 	if !ok {
-		// We don't know about this node.  If primed, we should, otherwise we'll catch it
+		// We don't know about this node.  If primed, we should, otherwise we'log catch it
 		// when the node is added.
 		if m.primed {
-			ll.Info("pod referenced unknown node")
+			log.Info("pod referenced unknown node")
 		}
 		return nil
 	}
 
 	if !n.isNodeMatch {
-		ll.Debug("ignoring pod on unmatching node")
+		log.Debug("ignoring pod on unmatching node")
 		return nil
 	}
 	// Pods spec & metadata (labels+namespace) are immutable. If it doesn't match now it never did.
 	if m.match.PodNamespace != "" && pod.Namespace != m.match.PodNamespace {
 		// This is a warning because the informer should only deliver pods in the specified namespace.
-		ll.Warn("unexpected pod namespace")
+		log.Warn("unexpected pod namespace")
 		return nil
 	}
 	if m.podSelector != nil && !m.podSelector.Matches(labels.Set(pod.Labels)) {
 		// This is a warning because pod labels should be immutable, and the informer should only
 		// give us matching pods.
-		ll.Warn("pod labels did not match; informer should not have delivered")
+		log.Warn("pod labels did not match; informer should not have delivered")
 		return nil
 	}
 
@@ -361,15 +361,15 @@ func (m *Controller) updatePod(pod *corev1.Pod) error {
 			ready = (cond.Status == corev1.ConditionTrue)
 		}
 	}
-	ll = ll.WithFields(logrus.Fields{"pod_ready": ready, "pod_phase": pod.Status.Phase})
+	log = log.WithFields(logrus.Fields{"pod_ready": ready, "pod_phase": pod.Status.Phase})
 	if (ready && running) == active {
-		ll.Debug("pod matching state unchanged")
+		log.Debug("pod matching state unchanged")
 		return nil // no change
 	}
 	if ready && running {
 		n.matchingPods[podKey] = pod.DeepCopy()
 		if len(n.matchingPods) == 1 {
-			ll.Debug("enabling node; pod update met node match criteria")
+			log.Debug("enabling node; pod update met node match criteria")
 			n.enabled = true
 			if m.primed {
 				m.action.EnableNodes(n.k8sNode)
@@ -378,7 +378,7 @@ func (m *Controller) updatePod(pod *corev1.Pod) error {
 	} else {
 		delete(n.matchingPods, podKey)
 		if len(n.matchingPods) == 0 {
-			ll.Debug("disabling node; updated pod no longer meets node match criteria")
+			log.Debug("disabling node; updated pod no longer meets node match criteria")
 			m.action.DisableNodes(n.k8sNode)
 		}
 	}
@@ -442,7 +442,7 @@ func (m *Controller) OnUpdate(_, newObj interface{}) {
 	case *corev1.Pod:
 		m.updatePod(r)
 	default:
-		m.ll.Errorf("informer emitted unexpected type: %T", newObj)
+		m.log.Errorf("informer emitted unexpected type: %T", newObj)
 	}
 }
 
@@ -456,7 +456,7 @@ func (m *Controller) OnDelete(obj interface{}) {
 	case *corev1.Pod:
 		m.deletePod(r)
 	default:
-		m.ll.Errorf("informer emitted unexpected type: %T", obj)
+		m.log.Errorf("informer emitted unexpected type: %T", obj)
 	}
 }
 

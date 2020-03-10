@@ -64,7 +64,7 @@ func TestIPControllerReconcileDesiredIPs(t *testing.T) {
 						return ip, err
 					},
 				},
-				ll: log.NewTestLogger(t),
+				log: log.NewTestLogger(t),
 			}
 			i.reconcileDesiredIPs(ctx)
 			require.ElementsMatch(t, tc.expectPendingIPs, i.pendingIPs)
@@ -94,7 +94,7 @@ func TestIPControllerReconcilePendingIPs(t *testing.T) {
 					require.EqualValues(t, tc.expectedIPs, ips)
 					return tc.onNewIPsReturn
 				},
-				ll: logrus.New(),
+				log: logrus.New(),
 			}
 			copy(i.ips, tc.existingIPs)
 			copy(i.pendingIPs, tc.pendingIPs)
