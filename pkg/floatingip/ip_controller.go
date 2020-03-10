@@ -349,7 +349,7 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 					i.assignableNodes.Add(oldProviderID, true)
 					log.WithField("node", nodeName).Error("ip not found; node will be reassigned")
 				} else {
-					log.Error("ip not found; node will be removed from assignable")
+					log.Error("ip not found; ip will be removed from assignable")
 					i.assignableIPs.Delete(ip)
 				}
 			}
