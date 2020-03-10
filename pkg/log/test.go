@@ -8,10 +8,10 @@ import (
 
 // NewTestLogger builds a logger which outputs to the t.Log().
 func NewTestLogger(tb testing.TB) *logrus.Logger {
-	ll := logrus.New()
-	ll.SetOutput(&testLogger{tb: tb})
-	ll.SetLevel(logrus.DebugLevel)
-	return ll
+	log := logrus.New()
+	log.SetOutput(&testLogger{tb: tb})
+	log.SetLevel(logrus.DebugLevel)
+	return log
 }
 
 type testLogger struct {

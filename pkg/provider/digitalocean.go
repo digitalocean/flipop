@@ -21,7 +21,7 @@ const (
 	// DigitalOcean is an identifier which can be used to select the godo provider.
 	DigitalOcean = "digitalocean"
 
-	// doActionExpiration defines how long we'll hold onto an action before expiring it.
+	// doActionExpiration defines how long we'log hold onto an action before expiring it.
 	doActionExpiration = 1 * time.Hour
 )
 
@@ -34,7 +34,7 @@ type digitalOcean struct {
 	*godo.Client
 	lock              sync.Mutex
 	floatingIPActions map[string]*doAction
-	ll                logrus.FieldLogger
+	log                logrus.FieldLogger
 }
 
 type doTokenSource struct {
@@ -49,7 +49,7 @@ func (t *doTokenSource) Token() (*oauth2.Token, error) {
 }
 
 // NewDigitalOcean returns a new provider for DigitalOcean.
-func NewDigitalOcean(ll logrus.FieldLogger) Provider {
+func NewDigitalOcean(log logrus.FieldLogger) Provider {
 	token := os.Getenv("DIGITALOCEAN_ACCESS_TOKEN")
 	if token == "" {
 		return nil
@@ -63,7 +63,7 @@ func NewDigitalOcean(ll logrus.FieldLogger) Provider {
 	return &digitalOcean{
 		Client:            client,
 		floatingIPActions: make(map[string]*doAction),
-		ll:                ll.WithField("provider", "digitalocean"),
+		log:                log.WithField("provider", "digitalocean"),
 	}
 }
 
@@ -89,10 +89,10 @@ func (do *digitalOcean) IPToProviderID(ctx context.Context, ip string) (string, 
 
 // AssignIP assigns a floating IP to the specified node.
 func (do *digitalOcean) AssignIP(ctx context.Context, ip, providerID string) error {
-	ll := do.ll.WithFields(logrus.Fields{"ip": ip, "provider_id": providerID})
+	log := do.log.WithFields(logrus.Fields{"ip": ip, "provider_id": providerID})
 	err := do.asyncStatus(ctx, ip)
 	if err != nil {
-		ll.WithError(err).Debug("checking in-progress status for assign IP")
+		log.WithError(err).Debug("checking in-progress status for assign IP")
 		return err
 	}
 	dropletID, err := strconv.ParseInt(strings.TrimPrefix(providerID, "digitalocean://"), 10, 0)
@@ -136,7 +136,7 @@ func (do *digitalOcean) AssignIP(ctx context.Context, ip, providerID string) err
 		actionID: action.ID,
 		expires:  time.Now().Add(doActionExpiration),
 	}
-	do.ll.WithFields(logrus.Fields{"ip": ip, "action_id": action.ID}).Debug("floating IP assignment initiated")
+	do.log.WithFields(logrus.Fields{"ip": ip, "action_id": action.ID}).Debug("floating IP assignment initiated")
 	return ErrInProgress
 }
 
@@ -178,7 +178,7 @@ func (do *digitalOcean) NodeToIP(ctx context.Context, providerID string) (string
 	}
 
 	if len(ips) < 2 {
-		// All droplets have a public IP. With a FLIP, they'll have 2. If there's only 1, no FLIP.
+		// All droplets have a public IP. With a FLIP, they'log have 2. If there's only 1, no FLIP.
 		return "", nil
 	}
 
@@ -215,16 +215,16 @@ func (do *digitalOcean) asyncStatus(ctx context.Context, ip string) error {
 	if a == nil {
 		return nil
 	}
-	ll := do.ll.WithFields(logrus.Fields{"ip": ip, "action_id": a.actionID})
+	log := do.log.WithFields(logrus.Fields{"ip": ip, "action_id": a.actionID})
 	action, _, err := do.FloatingIPActions.Get(ctx, ip, a.actionID)
 	if err != nil {
-		ll.WithError(err).Error("retrieving action status")
+		log.WithError(err).Error("retrieving action status")
 		return err
 	}
 	do.lock.Lock()
 	defer do.lock.Unlock()
 	if action == nil || action.Status != godo.ActionInProgress {
-		ll.Debug("action completed")
+		log.Debug("action completed")
 		delete(do.floatingIPActions, ip)
 		return nil
 	}

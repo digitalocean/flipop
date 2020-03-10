@@ -92,7 +92,7 @@ func TestControllerIsNodeMatch(t *testing.T) {
 	for _, tc := range tcs {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Controller{ll: log.NewTestLogger(t)}
+			m := &Controller{log: log.NewTestLogger(t)}
 			m.SetCriteria(tc.match)
 			m.primed = true
 			n := &node{
