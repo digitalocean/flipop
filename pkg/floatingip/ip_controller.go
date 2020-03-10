@@ -177,6 +177,7 @@ func (i *ipController) updateIPs(ips []string, desiredIPs int) {
 				// We don't unassign IPs when DisableNodes is called, we just mark the ip as assignable.
 				log.Info("update removes ip assigned to inactive node")
 			}
+
 			i.providerIDToIP[status.nodeProviderID] = ""
 			delete(i.providerIDToRetry, status.nodeProviderID)
 		}
@@ -285,7 +286,9 @@ func (i *ipController) reconcilePendingIPs(ctx context.Context) {
 	if len(i.pendingIPs) == 0 {
 		return
 	}
-	allIPs := append(append([]string{}, i.ips...), i.pendingIPs...)
+	allIPs := make([]string, 0, len(i.ips)+len(i.pendingIPs))
+	copy(allIPs, i.ips)
+	allIPs = append(allIPs, i.pendingIPs...)
 	if i.onNewIPs != nil {
 		log := i.log.WithField("ips", i.pendingIPs)
 		log.Info("updating IPs with caller")
