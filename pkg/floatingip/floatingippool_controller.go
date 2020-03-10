@@ -60,7 +60,7 @@ type Controller struct {
 	pools    map[string]floatingIPPool
 	poolLock sync.Mutex
 
-	log  logrus.FieldLogger
+	log logrus.FieldLogger
 	ctx context.Context
 }
 
@@ -74,7 +74,7 @@ func NewController(kubeConfig clientcmd.ClientConfig, providers map[string]provi
 	c := &Controller{
 		providers: providers,
 		pools:     make(map[string]floatingIPPool),
-		log:        log,
+		log:       log,
 	}
 	var err error
 	clientConfig, err := kubeConfig.ClientConfig()
@@ -179,6 +179,13 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 		pool.matchController.Start(c.ctx)
 		log.Info("FloatingIPPool added; beginning reconciliation")
 		c.pools[k8sPool.GetSelfLink()] = pool
+	}
+	if !isValid {
+		log.Info("updated FloatingIPPool spec is invalid")
+		pool.matchController.Stop()
+		pool.ipController.stop()
+		delete(c.pools, k8sPool.GetSelfLink())
+		return
 	}
 
 	prov := c.providers[k8sPool.Spec.Provider]

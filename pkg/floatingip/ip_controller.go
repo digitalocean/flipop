@@ -41,7 +41,7 @@ type ipController struct {
 
 	onNewIPs newIPFunc
 
-	log       logrus.FieldLogger
+	log      logrus.FieldLogger
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	pokeChan chan struct{}
@@ -88,7 +88,7 @@ type retry struct {
 // newIPController initializes an ipController.
 func newIPController(log logrus.FieldLogger, onNewIPs newIPFunc, onStatusUpdate statusUpdateFunc) *ipController {
 	i := &ipController{
-		log:             log,
+		log:            log,
 		onNewIPs:       onNewIPs,
 		onStatusUpdate: onStatusUpdate,
 		pokeChan:       make(chan struct{}, 1),
@@ -177,11 +177,11 @@ func (i *ipController) updateIPs(ips []string, desiredIPs int) {
 				// We don't unassign IPs when DisableNodes is called, we just mark the ip as assignable.
 				log.Info("update removes ip assigned to inactive node")
 			}
-			i.assignableIPs.Delete(ip)
-			delete(i.ipToStatus, ip)
 			i.providerIDToIP[status.nodeProviderID] = ""
 			delete(i.providerIDToRetry, status.nodeProviderID)
 		}
+		i.assignableIPs.Delete(ip)
+		delete(i.ipToStatus, ip)
 	}
 	i.ips = ips
 	i.desiredIPs = desiredIPs
@@ -211,7 +211,7 @@ func (i *ipController) run(ctx context.Context) {
 
 // retryTimerDuration converts our nextRetry timestamp to a duration from now.
 func (i *ipController) retryTimerDuration() time.Duration {
-	dur := i.nextRetry.Sub(time.Now())
+	dur := time.Until(i.nextRetry)
 	if dur < 0 {
 		i.log.Debug("ipController reconciliation will retry immediately")
 		return 0
@@ -244,9 +244,7 @@ func (i *ipController) reconcile(ctx context.Context) {
 }
 
 func (i *ipController) retry(next time.Time) {
-	i.log.WithField("pause", next.Sub(time.Now()).String()).Debug("retry requested")
-	if (i.nextRetry == time.Time{}) || (i.nextRetry.After(next)) {
-		i.log.WithField("pause", next.Sub(time.Now()).String()).Debug("retry scheduled")
+	if i.nextRetry.IsZero() || i.nextRetry.After(next) {
 		i.nextRetry = next
 	}
 }
@@ -276,6 +274,7 @@ func (i *ipController) reconcileDesiredIPs(ctx context.Context) {
 		i.pendingIPs = append(i.pendingIPs, ip)
 		i.createAttempts = 0
 		i.createError = ""
+		i.updateStatus = true
 	}
 }
 
@@ -463,7 +462,7 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 		// If this IP was previously involved in an error we shouldn't attempt to try again before
 		// its retry timestamp.
 		status := i.ipToStatus[ip]
-		if (status.nextRetry != time.Time{}) && !status.nextRetry.After(time.Now()) {
+		if !status.nextRetry.IsZero() && !status.nextRetry.After(time.Now()) {
 			retryIPs = append(retryIPs, ip)
 			i.retry(status.nextRetry)
 			continue
@@ -474,7 +473,7 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 		// Similarly, if this node was involved in an error we should wait until after its retry
 		// timestamp has elapsed.
 		nRetry, ok := i.providerIDToRetry[providerID]
-		if ok && (nRetry.nextRetry != time.Time{}) && !nRetry.nextRetry.After(time.Now()) {
+		if ok && !nRetry.nextRetry.IsZero() && !nRetry.nextRetry.After(time.Now()) {
 			retryIPs = append(retryIPs, ip)
 			retryProviders = append(retryProviders, providerID)
 			i.retry(nRetry.nextRetry)

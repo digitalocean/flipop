@@ -26,9 +26,9 @@ type Provider interface {
 	// AssignIP assigns a floating IP to the specified node.
 	AssignIP(ctx context.Context, ip, providerID string) error
 
-	// CreateIP creates a new floating IP.
+	// NodeToIP attempts to find any floating IPs bound to the specified node.
 	NodeToIP(ctx context.Context, providerID string) (string, error)
 
-	// NodeToIP attempts to find any floating IPs bound to the specified node.
+	// CreateIP creates a new floating IP.
 	CreateIP(ctx context.Context, region string) (string, error)
 }
