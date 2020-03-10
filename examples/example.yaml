@@ -5,10 +5,14 @@ metadata:
 spec: 
   provider: digitalocean
   region: nyc3
+  desiredIPs: 3
   ips:
-  - 138.197.61.98
-  - 165.227.248.163
+  - 192.168.1.1
+  - 192.168.2.1
   match:
     podNamespace: ingress
     podLabel: app=nginx-ingress,component=controller
     nodeLabel: doks.digitalocean.com/node-pool=work
+    tolerations:
+      - effect: NoSchedule
+        key: node.kubernetes.io/unschedulable
