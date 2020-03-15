@@ -35,6 +35,8 @@ import (
 type Interface interface {
 	// FloatingIPPools returns a FloatingIPPoolInformer.
 	FloatingIPPools() FloatingIPPoolInformer
+	// NodeDNSRecordSets returns a NodeDNSRecordSetInformer.
+	NodeDNSRecordSets() NodeDNSRecordSetInformer
 }
 
 type version struct {
@@ -51,4 +53,9 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // FloatingIPPools returns a FloatingIPPoolInformer.
 func (v *version) FloatingIPPools() FloatingIPPoolInformer {
 	return &floatingIPPoolInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// NodeDNSRecordSets returns a NodeDNSRecordSetInformer.
+func (v *version) NodeDNSRecordSets() NodeDNSRecordSetInformer {
+	return &nodeDNSRecordSetInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

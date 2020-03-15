@@ -28,3 +28,5 @@ SOFTWARE.
 package v1alpha1
 
 type FloatingIPPoolExpansion interface{}
+
+type NodeDNSRecordSetExpansion interface{}

@@ -41,6 +41,10 @@ func (c *FakeFlipopV1alpha1) FloatingIPPools(namespace string) v1alpha1.Floating
 	return &FakeFloatingIPPools{c, namespace}
 }
 
+func (c *FakeFlipopV1alpha1) NodeDNSRecordSets(namespace string) v1alpha1.NodeDNSRecordSetInterface {
+	return &FakeNodeDNSRecordSets{c, namespace}
+}
+
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
 func (c *FakeFlipopV1alpha1) RESTClient() rest.Interface {
