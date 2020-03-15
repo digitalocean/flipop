@@ -23,6 +23,10 @@ const (
 
 	// doActionExpiration defines how long we'log hold onto an action before expiring it.
 	doActionExpiration = 1 * time.Hour
+
+	dnsRecordTypeA = "A"
+
+	dnsRecordsPerPage = 200
 )
 
 type doAction struct {
@@ -31,10 +35,14 @@ type doAction struct {
 }
 
 type digitalOcean struct {
-	*godo.Client
+	// Separate the individual interfaces to make mocking/testing easier.
+	domainsService    godo.DomainsService
+	ipsService        godo.FloatingIPsService
+	ipActionsService  godo.FloatingIPActionsService
+	dropletsService   godo.DropletsService
 	lock              sync.Mutex
 	floatingIPActions map[string]*doAction
-	log                logrus.FieldLogger
+	log               logrus.FieldLogger
 }
 
 type doTokenSource struct {
@@ -61,9 +69,12 @@ func NewDigitalOcean(log logrus.FieldLogger) Provider {
 	oauthClient := oauth2.NewClient(context.Background(), tokenSource)
 	client := godo.NewClient(oauthClient)
 	return &digitalOcean{
-		Client:            client,
+		domainsService:    client.Domains,
+		ipsService:        client.FloatingIPs,
+		ipActionsService:  client.FloatingIPActions,
+		dropletsService:   client.Droplets,
 		floatingIPActions: make(map[string]*doAction),
-		log:                log.WithField("provider", "digitalocean"),
+		log:               log.WithField("provider", "digitalocean"),
 	}
 }
 
@@ -74,7 +85,7 @@ func (do *digitalOcean) IPToProviderID(ctx context.Context, ip string) (string, 
 	if err != nil {
 		return "", err
 	}
-	flip, res, err := do.FloatingIPs.Get(ctx, ip)
+	flip, res, err := do.ipsService.Get(ctx, ip)
 	if err != nil {
 		if res != nil && res.StatusCode == http.StatusNotFound {
 			return "", ErrNotFound
@@ -99,7 +110,7 @@ func (do *digitalOcean) AssignIP(ctx context.Context, ip, providerID string) err
 	if err != nil {
 		return fmt.Errorf("parsing provider id: %w", err)
 	}
-	action, res, err := do.FloatingIPActions.Assign(ctx, ip, int(dropletID))
+	action, res, err := do.ipActionsService.Assign(ctx, ip, int(dropletID))
 	if err != nil {
 		if res != nil {
 			if res.StatusCode == http.StatusNotFound {
@@ -142,7 +153,7 @@ func (do *digitalOcean) AssignIP(ctx context.Context, ip, providerID string) err
 
 // CreateIP creates a new floating IP.
 func (do *digitalOcean) CreateIP(ctx context.Context, region string) (string, error) {
-	flip, _, err := do.FloatingIPs.Create(ctx, &godo.FloatingIPCreateRequest{
+	flip, _, err := do.ipsService.Create(ctx, &godo.FloatingIPCreateRequest{
 		Region: region,
 	})
 	if err != nil {
@@ -157,7 +168,7 @@ func (do *digitalOcean) NodeToIP(ctx context.Context, providerID string) (string
 	if err != nil {
 		return "", fmt.Errorf("parsing provider id: %w", err)
 	}
-	droplet, res, err := do.Droplets.Get(ctx, int(dropletID))
+	droplet, res, err := do.dropletsService.Get(ctx, int(dropletID))
 	if err != nil {
 		if res != nil && res.StatusCode == http.StatusNotFound {
 			return "", ErrNotFound
@@ -216,7 +227,7 @@ func (do *digitalOcean) asyncStatus(ctx context.Context, ip string) error {
 		return nil
 	}
 	log := do.log.WithFields(logrus.Fields{"ip": ip, "action_id": a.actionID})
-	action, _, err := do.FloatingIPActions.Get(ctx, ip, a.actionID)
+	action, _, err := do.ipActionsService.Get(ctx, ip, a.actionID)
 	if err != nil {
 		log.WithError(err).Error("retrieving action status")
 		return err
@@ -239,13 +250,102 @@ func (do *digitalOcean) toRetryError(err error, res *godo.Response) error {
 		case http.StatusRequestTimeout,
 			http.StatusServiceUnavailable,
 			http.StatusTooManyRequests:
-			return newRetryError(err, RetryFast)
+			return NewRetryError(err, RetryFast)
 		}
 	}
-	if nErr, ok := err.(net.Error); ok {
+	if nErr, ok := errors.Unwrap(err).(net.Error); ok {
 		if nErr.Temporary() {
-			return newRetryError(err, RetryFast)
+			return NewRetryError(err, RetryFast)
 		}
 	}
 	return err
+}
+
+// EnsureDNSARecordSet ensures that the record set w/ name `recordName` contains all IPs listed in `ips`
+// and no others.
+func (do *digitalOcean) EnsureDNSARecordSet(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
+	// First we need to know what records exist.
+	log := do.log.WithFields(logrus.Fields{"zone": zone, "record_name": recordName})
+	ipSet := make(map[string]struct{})
+	for _, ip := range ips {
+		ipSet[ip] = struct{}{}
+	}
+	var toDelete []int
+	listOptions := &godo.ListOptions{
+		Page:    1,
+		PerPage: dnsRecordsPerPage,
+	}
+	recordTemplate := godo.DomainRecordEditRequest{
+		Type: dnsRecordTypeA,
+		Name: recordName,
+		TTL:  ttl,
+	}
+	for {
+		// Until NETPROD-1354 is addressed we need to iterate the whole zone :-(.
+		log.WithField("page", listOptions.Page).Debug("querying records API for zone")
+		records, res, err := do.domainsService.Records(ctx, zone, listOptions)
+		if err != nil {
+			return do.toRetryError(fmt.Errorf("listing zone records: %w", err), res)
+		}
+
+		for _, record := range records {
+			if (record.Name != recordName) || (record.Type != dnsRecordTypeA) {
+				continue
+			}
+			_, ok := ipSet[record.Data]
+			if ok {
+				if record.TTL != ttl {
+					update := recordTemplate
+					update.Data = record.Data
+					log.WithField("record_id", record.ID).Debug("updating record TTL")
+					_, res, err := do.domainsService.EditRecord(ctx, zone, record.ID, &update)
+					if err != nil {
+						return do.toRetryError(fmt.Errorf("updating record TTL: %w", err), res)
+					}
+				}
+				delete(ipSet, record.Data)
+			} else {
+				toDelete = append(toDelete, record.ID)
+			}
+		}
+
+		if res == nil || res.Links == nil {
+			return errors.New("invalid response from DigitalOcean API; no page links")
+		}
+		if res.Links.IsLastPage() {
+			break
+		}
+		listOptions.Page++
+	}
+
+	// Update/Create records for any IPs without records.
+	for ip := range ipSet {
+		update := recordTemplate
+		update.Data = ip
+		if len(toDelete) > 0 {
+			log.WithFields(logrus.Fields{"record_id": toDelete[0], "ip": ip}).Debug("updating record target")
+			_, res, err := do.domainsService.EditRecord(ctx, zone, toDelete[0], &update)
+			if err != nil {
+				return do.toRetryError(fmt.Errorf("updating record: %w", err), res)
+			}
+			toDelete = toDelete[1:]
+		} else {
+			log.WithField("ip", ip).Debug("creating new record")
+			_, res, err := do.domainsService.CreateRecord(ctx, zone, &update)
+			if err != nil {
+				return do.toRetryError(fmt.Errorf("creating record: %w", err), res)
+			}
+		}
+	}
+
+	// Clear any unneeded records.
+	for _, id := range toDelete {
+		log.WithField("record_id", id).Debug("deleting unneeded record")
+		res, err := do.domainsService.DeleteRecord(ctx, zone, id)
+		if err != nil {
+			return do.toRetryError(fmt.Errorf("deleting record: %w", err), res)
+		}
+	}
+	log.Debug("completed updating a record")
+	return nil
 }

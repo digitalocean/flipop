@@ -55,12 +55,20 @@ spec:
                             type: string
                           value: 
                             type: string
+                dnsRecordSet:
+                  type: object
+                  properties:
+                    zone:
+                      type: string
+                    recordName:
+                      type: string
+                    ttl:
+                      type: integer
             status:
               type: object
               properties:
                 error:
                   type: string
-
                 ips:
                   type: object
                   additionalProperties:

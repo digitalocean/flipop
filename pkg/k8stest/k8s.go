@@ -95,7 +95,6 @@ func MakeNode(name, providerID string, manipulations ...func(node metav1.Object)
 				"vessel": "starship",
 				"class":  "galaxy",
 			}),
-			Namespace: "star-fleet",
 		},
 		Spec: corev1.NodeSpec{
 			ProviderID: providerID,
@@ -170,5 +169,24 @@ func MakeMatch() flipopv1alpha1.Match {
 		PodNamespace: "star-fleet",
 		PodLabel:     "vessel=runabout,class=danube",
 		Tolerations:  PodTolerations,
+	}
+}
+
+func MakeDNS() flipopv1alpha1.DNSRecordSet {
+	return flipopv1alpha1.DNSRecordSet{
+		Zone:       "example.com",
+		RecordName: "nodes",
+		TTL:        120,
+	}
+}
+
+func SetNodeAddress(t corev1.NodeAddressType, addr string) func(o metav1.Object) metav1.Object {
+	return func(o metav1.Object) metav1.Object {
+		n := o.(*corev1.Node)
+		n.Status.Addresses = append(n.Status.Addresses, corev1.NodeAddress{
+			Type:    t,
+			Address: addr,
+		})
+		return n
 	}
 }

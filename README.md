@@ -1,13 +1,14 @@
 # FLIPOP - Floating IP Operator
 
 ## What?
-This tool allocates and dynamically assigns floating IP addresses to Kubernetes nodes based upon criteria defined in a CustomerResourceDefinition.  Criteria for IP targeting can be based upon nodes (labels + taints) and their pods (health, namespace, and labels).
+This tool watches Kubernetes nodes and adjusts cloud network resources (floating IPs and DNS, currently) to target matching nodes. Nodes can be targeted based labels + taints and their pods (health, namespace, and labels). 
 
 ## Why?
-Kubernetes nodes and the pods they host are ephemeral and replaced in case of failure, update, or operational convenience. As a counter-point, DNS moves slowly.  Floating IPs can pivot traffic at the speed of nodes and pods, without requiring DNS updates.
+Kubernetes nodes and the pods they host are ephemeral and replaced in case of failure, update, or operational convenience. Kubernetes LoadBalancer type services are the traditional tool pivoting cluster traffic in these cases, but don't suit all workloads (ex. latency sensitive workloads, UDP, etc.). This tool aims to provide similar functionality through floating IPs and/or DNS.
 
 ## Config
 
+### FloatingIPPool
 ```
 apiVersion: flipop.digitalocean.com/v1alpha1
 kind: FloatingIPPool
@@ -16,14 +17,42 @@ metadata:
 spec: 
   provider: digitalocean
   region: nyc3
-  desiredIPs: 2
+  desiredIPs: 3
   ips:
-  - 1.2.3.4
-  - 5.6.7.8
+  - 192.168.1.1
+  - 192.168.2.1
+  dnsRecordSet:
+    recordName: hello-world
+    zone: example.com
+    ttl: 30
   match:
     podNamespace: ingress
     podLabel: app=nginx-ingress,component=controller
-    nodeLabel: doks.digitalocean.com/node-pool=ingress
+    nodeLabel: doks.digitalocean.com/node-pool=work
+    tolerations:
+      - effect: NoSchedule
+        key: node.kubernetes.io/unschedulable
+```
+
+### NodeDNSRecordSet
+```
+apiVersion: flipop.digitalocean.com/v1alpha1
+kind: NodeDNSRecordSet
+metadata:
+  name: ingress-nodes
+spec: 
+  provider: digitalocean
+  dnsRecordSet:
+    recordName: nodes
+    zone: example.com
+    ttl: 120 
+  match:
+    podNamespace: ingress
+    podLabel: app=nginx-ingress,component=controller
+    nodeLabel: doks.digitalocean.com/node-pool=work
+    tolerations:
+      - effect: NoSchedule
+        key: node.kubernetes.io/unschedulable
 ```
 
 ## Installation
@@ -37,6 +66,5 @@ This operator is concerned with the relationships between FloatingIPPool, Node, 
 
 ## TODO
 - __Grace-periods__ - Moving IPs has a cost. It breaks all active connections, has a momentary period where connections will fail, and risks errors.  In some cases it may be better to give the node a chance to recover.
-- __DNS__ - 
 - __RBAC__ - Right now this just grants ClusterAdmin which is not great.
 - __Docker Repo__ - Need to create a docker repo.

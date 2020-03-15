@@ -16,4 +16,4 @@
 .vscode
 
 # Exclude binary
-./flipop
+/flipop

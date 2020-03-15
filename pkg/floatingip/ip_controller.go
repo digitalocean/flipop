@@ -18,6 +18,7 @@ import (
 
 const (
 	reconcilePeriod = time.Minute
+	defaultDNSTTL   = 60
 )
 
 var (
@@ -70,6 +71,9 @@ type ipController struct {
 
 	updateStatus   bool
 	onStatusUpdate statusUpdateFunc
+
+	dns      *flipopv1alpha1.DNSRecordSet
+	dnsDirty bool
 }
 
 type ipStatus struct {
@@ -151,6 +155,7 @@ func (i *ipController) updateIPs(ips []string, desiredIPs int) {
 		return
 	}
 	i.updateStatus = true
+	i.dnsDirty = true
 	if len(i.disabledIPs) != 0 { // only log if the spec changed.
 		i.log.WithField("ips", i.disabledIPs).Warn("update desiredIPs < len(ips); some IPs will be disabled")
 	}
@@ -233,6 +238,7 @@ func (i *ipController) reconcile(ctx context.Context) {
 	i.reconcilePendingIPs(ctx)
 	i.reconcileIPStatus(ctx)
 	i.reconcileAssignment(ctx)
+	i.reconcileDNS(ctx)
 
 	if i.updateStatus && i.onStatusUpdate != nil {
 		err := i.onStatusUpdate(ctx, i.buildStatusUpdate())
@@ -276,6 +282,7 @@ func (i *ipController) reconcileDesiredIPs(ctx context.Context) {
 		i.createAttempts = 0
 		i.createError = ""
 		i.updateStatus = true
+		i.dnsDirty = true
 	}
 }
 
@@ -528,6 +535,19 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 	}
 }
 
+func (i *ipController) reconcileDNS(ctx context.Context) {
+	if len(i.ips) == 0 || i.dns == nil || !i.dnsDirty {
+		return
+	}
+	i.log.WithField("ips", i.ips).Info("updating dns")
+	err := i.provider.EnsureDNSARecordSet(ctx, i.dns.Zone, i.dns.RecordName, i.ips, i.dns.TTL)
+	if err != nil {
+		i.log.WithError(err).Error("setting DNSRecordSet")
+		return
+	}
+	i.dnsDirty = false
+}
+
 func (i *ipController) DisableNodes(nodes ...*corev1.Node) {
 	i.lock.Lock()
 	defer i.lock.Unlock()
@@ -640,6 +660,29 @@ func (i *ipController) buildStatusUpdate() flipopv1alpha1.FloatingIPPoolStatus {
 		status.AssignableNodes = append(status.AssignableNodes, i.providerIDToNodeName[providerID])
 	}
 	return status
+}
+
+func (i *ipController) updateDNSSpec(dns *flipopv1alpha1.DNSRecordSet) {
+	i.lock.Lock()
+	defer i.lock.Unlock()
+	if reflect.DeepEqual(dns, i.dns) {
+		return
+	}
+	i.dns = nil
+	i.dnsDirty = false
+	if dns == nil {
+		return
+	}
+	if dns.RecordName == "" || dns.Zone == "" {
+		i.log.Warn("FloatingIPPool had dns, but didn't include record name or zone.")
+		return
+	}
+	i.dns = dns.DeepCopy()
+	if i.dns.TTL == 0 {
+		i.dns.TTL = defaultDNSTTL
+	}
+	i.dnsDirty = true
+	i.poke()
 }
 
 type orderedSet struct {

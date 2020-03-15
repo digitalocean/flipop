@@ -55,6 +55,9 @@ type FloatingIPPoolSpec struct {
 
 	// Match describes the set of nodes to assign IPs.
 	Match Match `json:"match"`
+
+	// DNS describes a DNS record which should point to the floating IPs.
+	DNSRecordSet *DNSRecordSet `json:"dnsRecordSet,omitempty"`
 }
 
 // Match describes a pattern for finding resources the floating-IP should follow.
@@ -95,11 +98,18 @@ type IPStatus struct {
 	Error      string  `json:"error,omitempty"`
 }
 
+// DNSRecordSet describes parameters for creating/updating a DNS record set.
+type DNSRecordSet struct {
+	Zone       string `json:"zone"`
+	RecordName string `json:"recordName"`
+	TTL        int    `json:"ttl"`
+}
+
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +resource:path=floatingippools
 
-// FloatingIPPool is the Schema for the floatingippools API
+// FloatingIPPool defines a schema describing a desired mapping of floating IPs to nodes.
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type FloatingIPPool struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -117,4 +127,49 @@ type FloatingIPPoolList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []FloatingIPPool `json:"items"`
+}
+
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +resource:path=nodednsrecordset
+
+// NodeDNSRecordSet defines a schema for updating a DNS record set to target matching nodes.
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+type NodeDNSRecordSet struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   NodeDNSRecordSetSpec   `json:"spec,omitempty"`
+	Status NodeDNSRecordSetStatus `json:"status,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +resource:path=nodednsrecordset
+
+// NodeDNSRecordSetList contains a list of NodeDNSRecordSet
+type NodeDNSRecordSetList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []NodeDNSRecordSet `json:"items"`
+}
+
+// NodeDNSRecordSetStatus defines the observed state of NodeDNSRecordSet.
+type NodeDNSRecordSetStatus struct {
+	Error string `json:"error,omitempty"`
+}
+
+// NodeDNSRecordSetSpec defines the desired state of NodeDNSRecordSet.
+type NodeDNSRecordSetSpec struct {
+	// Provider describes the provider hosting the DNS zone.
+	Provider string `json:"provider"`
+
+	// Match describes the set of nodes to assign DNS entries.
+	Match Match `json:"match"`
+
+	// DNS describes a DNS record which should point to matching nodes.
+	DNSRecordSet DNSRecordSet `json:"dnsRecordSet"`
+
+	// AddressType defines which node IP to add (ex. ExternalIP or InternalIP), currently hostname
+	// and IPv6 address types are not supported. Defaults to ExternalIP.
+	AddressType corev1.NodeAddressType `json:"addressType"`
 }
