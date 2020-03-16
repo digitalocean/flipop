@@ -2,7 +2,7 @@ GO_VERSION := 1.13
 
 
 image: dev
-	docker build -t digitalocean/flipop .
+	docker build -t digitaloceanappsail/flipop .
 
 dev:
 	docker build --no-cache -t flipop-dev -f Dockerfile.dev \
@@ -18,7 +18,7 @@ generate-k8s:
 		flipop:v1alpha1 \
 		--go-header-file=hack/boilerplate.go.txt
 
-image-push: 
-	docker push digitalocean/flipop
+image-push: image
+	docker push digitaloceanappsail/flipop
 
 .PHONY: dev image
