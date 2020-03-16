@@ -57,7 +57,9 @@ spec:
 
 ## Installation
 ```
-kubectl apply -f k8s/*
+kubectl create namespace flipop
+kubectl create secret generic flipop -n flipop --from-literal=DIGITALOCEAN_ACCESS_TOKEN="CENSORED"
+kubectl apply -n flipop -f k8s/*
 ```
 
 ## Why not operator-framework/kubebuilder?

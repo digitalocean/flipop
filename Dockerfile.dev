@@ -1,4 +1,4 @@
-ARG GO_IMAGE=docker.io/golang-buster
+ARG GO_IMAGE=docker.io/golang:1.13-buster
 
 FROM ${GO_IMAGE}
 

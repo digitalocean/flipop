@@ -1,0 +1,58 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: flipop
+rules:
+- apiGroups: [""]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: ["flipop.digitalocean.com"]
+  resources: ["floatingippools", "nodednsrecordsets"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: ["flipop.digitalocean.com"]
+  resources: ["floatingippools/status", "nodednsrecordsets/status"]
+  verbs: ["get", "watch", "list", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flipop
+  namespace: flipop
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "configmaps/status"]
+  verbs: ["get", "list", "watch", "update", "create", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["configmaps/status"]
+  verbs: ["get", "update", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  creationTimestamp: null
+  name: flipop
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flipop
+subjects:
+- kind: ServiceAccount
+  name: flipop
+  namespace: flipop
+
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: RoleBinding
+metadata:
+  namespace: flipop
+  name: flipop
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flipop
+subjects:
+- kind: ServiceAccount
+  name: flipop
+  namespace: flipop
