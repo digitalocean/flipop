@@ -16,7 +16,6 @@ spec:
     type: RollingUpdate
   template:
     metadata:
-      creationTimestamp: null
       labels:
         app: flipop
     spec:
@@ -30,7 +29,6 @@ spec:
         image: digitaloceanappsail/flipop:latest
         imagePullPolicy: Always
         name: flipop
-        resources: {}
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       serviceAccount: flipop
