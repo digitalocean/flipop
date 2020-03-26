@@ -1,7 +1,7 @@
 # FLIPOP - Floating IP Operator
 
 ## What?
-This tool watches Kubernetes nodes and adjusts cloud network resources (floating IPs and DNS, currently) to target matching nodes. Nodes can be targeted based labels + taints and their pods (health, namespace, and labels). 
+This tool watches Kubernetes nodes and adjusts cloud network resources (floating IPs and DNS, currently) to target matching nodes. Nodes can be targeted based labels + taints and their pods (health, namespace, and labels).
 
 ## Why?
 Kubernetes nodes and the pods they host are ephemeral and replaced in case of failure, update, or operational convenience. Kubernetes LoadBalancer type services are the traditional tool pivoting cluster traffic in these cases, but don't suit all workloads (ex. latency sensitive workloads, UDP, etc.). This tool aims to provide similar functionality through floating IPs and/or DNS.
