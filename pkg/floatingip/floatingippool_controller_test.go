@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	kt "github.com/digitalocean/flipop/pkg/k8stest"
@@ -33,6 +34,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 		expectAssignIPCalls   int
 		expectIPState         map[flipopv1alpha1.IPState]int
 		expectIPAssignment    map[string]string // expect a specific node to have a specific ip
+		expectSetDNSCalls     int
 	}{
 		{
 			name: "happy path",
@@ -51,6 +53,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				flipopv1alpha1.IPStateUnassigned: 1,
 			},
 			expectAssignIPCalls: 1,
+			expectSetDNSCalls:   1,
 		},
 		{
 			name: "create new ips",
@@ -69,6 +72,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				flipopv1alpha1.IPStateUnassigned: 1,
 			},
 			expectAssignIPCalls: 1,
+			expectSetDNSCalls:   1,
 		},
 		{
 			name: "already has ip",
@@ -93,6 +97,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				flipopv1alpha1.IPStateUnassigned: 1,
 			},
 			expectAssignIPCalls: 0,
+			expectSetDNSCalls:   1,
 		},
 		{
 			name: "no node selector",
@@ -111,6 +116,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				flipopv1alpha1.IPStateActive: 2,
 			},
 			expectAssignIPCalls: 2,
+			expectSetDNSCalls:   1,
 		},
 		{
 			name: "bad pod matches",
@@ -131,6 +137,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			expectIPState: map[flipopv1alpha1.IPState]int{
 				flipopv1alpha1.IPStateUnassigned: 2,
 			},
+			expectSetDNSCalls: 1,
 		},
 		{
 			name: "no pod constraints",
@@ -149,6 +156,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				flipopv1alpha1.IPStateUnassigned: 1,
 			},
 			expectAssignIPCalls: 1,
+			expectSetDNSCalls:   1,
 		},
 		{
 			name: "IP needs to be reassigned",
@@ -178,6 +186,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				flipopv1alpha1.IPStateActive: 2,
 			},
 			expectAssignIPCalls: 1,
+			expectSetDNSCalls:   1,
 		},
 		{
 			name: "invalid pod selector",
@@ -237,9 +246,12 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			assignIPCalls := 0
 
 			log := log.NewTestLogger(t)
+			var ensureDNSARecordSetCalls int
 			c := &Controller{
 				kubeCS:   kubeCSFake.NewSimpleClientset(kt.AsRuntimeObjects(tc.objs)...),
 				flipopCS: flipCSFake.NewSimpleClientset(k8s),
+				// Use assert because provider actions run in a goroutine and testify will miss the
+				// panic from require.
 				providers: map[string]provider.Provider{
 					"mock": &provider.MockProvider{
 						IPToProviderIDFunc: func(ctx context.Context, ip string) (string, error) {
@@ -251,16 +263,28 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 							return nil
 						},
 						CreateIPFunc: func(ctx context.Context, region string) (string, error) {
-							require.GreaterOrEqual(t, len(tc.createIPs), 1, "unexpected CreateIP call")
+							assert.GreaterOrEqual(t, len(tc.createIPs), 1, "unexpected CreateIP call")
 							ip := tc.createIPs[0]
 							tc.createIPs = tc.createIPs[1:]
 							return ip, nil
+						},
+						EnsureDNSARecordSetFunc: func(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
+							desired := k8s.Spec.DesiredIPs
+							if desired == 0 {
+								desired = len(k8s.Spec.IPs)
+							}
+							assert.Len(t, ips, desired)
+							assert.Equal(t, k8s.Spec.DNSRecordSet.Zone, zone)
+							assert.Equal(t, k8s.Spec.DNSRecordSet.RecordName, recordName)
+							assert.Equal(t, k8s.Spec.DNSRecordSet.TTL, ttl)
+							ensureDNSARecordSetCalls++
+							return nil
 						},
 					},
 				},
 				pools: make(map[string]floatingIPPool),
 				ctx:   ctx,
-				log:    log,
+				log:   log,
 			}
 			c.updateOrAdd(k8s)
 			if tc.expectError != "" {
@@ -317,6 +341,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			for ip, providerID := range tc.expectIPAssignment {
 				require.Equal(t, providerID, updatedK8s.Status.IPs[ip].ProviderID)
 			}
+			require.Equal(t, tc.expectSetDNSCalls, ensureDNSARecordSetCalls)
 		})
 	}
 }
@@ -333,6 +358,11 @@ func makeFloatingIPPool() *flipopv1alpha1.FloatingIPPool {
 			IPs: []string{
 				"192.168.1.1",
 				"172.16.2.2",
+			},
+			DNSRecordSet: &flipopv1alpha1.DNSRecordSet{
+				Zone:       "example.com",
+				RecordName: "deep-space-nine",
+				TTL:        120,
 			},
 		},
 	}

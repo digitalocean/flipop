@@ -64,6 +64,8 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 	// Group=flipop.digitalocean.com, Version=v1alpha1
 	case v1alpha1.SchemeGroupVersion.WithResource("floatingippools"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Flipop().V1alpha1().FloatingIPPools().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("nodednsrecordsets"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Flipop().V1alpha1().NodeDNSRecordSets().Informer()}, nil
 
 	}
 

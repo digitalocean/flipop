@@ -5,6 +5,19 @@ import "time"
 // RetrySchedule defines a schedule for retrying on errors.
 type RetrySchedule []time.Duration
 
+// Equal returns true if o is equal to this retry schedule, false otherwise.
+func (r RetrySchedule) Equal(o RetrySchedule) bool {
+	if len(r) != len(o) {
+		return false
+	}
+	for i, d := range r {
+		if o[i] != d {
+			return false
+		}
+	}
+	return true
+}
+
 type retryError struct {
 	error
 	retrySchedule RetrySchedule
@@ -29,13 +42,20 @@ var (
 
 // Next returns the next retry for the schedule.
 func (r RetrySchedule) Next(retries int) (int, time.Time) {
-	if retries >= len(r) {
-		return retries + 1, time.Now().Add(r[len(r)-1])
-	}
-	return retries + 1, time.Now().Add(r[retries])
+	return retries + 1, time.Now().Add(r.After(retries))
 }
 
-func newRetryError(err error, s RetrySchedule) error {
+// After returns the duration we should wait before our next attempt.
+func (r RetrySchedule) After(retries int) time.Duration {
+	if retries >= len(r) {
+		return r[len(r)-1]
+	}
+	return r[retries]
+}
+
+// NewRetryError creates a new retry error with the provided schedule. It's not recommended
+// for use outside of provider, but is exported for testing via the mock provider interface.
+func NewRetryError(err error, s RetrySchedule) error {
 	return &retryError{
 		error:         err,
 		retrySchedule: s,

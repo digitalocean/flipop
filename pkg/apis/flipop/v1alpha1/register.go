@@ -65,6 +65,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
 		&FloatingIPPool{},
 		&FloatingIPPoolList{},
+		&NodeDNSRecordSet{},
+		&NodeDNSRecordSetList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 

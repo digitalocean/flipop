@@ -34,3 +34,11 @@ type FloatingIPPoolListerExpansion interface{}
 // FloatingIPPoolNamespaceListerExpansion allows custom methods to be added to
 // FloatingIPPoolNamespaceLister.
 type FloatingIPPoolNamespaceListerExpansion interface{}
+
+// NodeDNSRecordSetListerExpansion allows custom methods to be added to
+// NodeDNSRecordSetLister.
+type NodeDNSRecordSetListerExpansion interface{}
+
+// NodeDNSRecordSetNamespaceListerExpansion allows custom methods to be added to
+// NodeDNSRecordSetNamespaceLister.
+type NodeDNSRecordSetNamespaceListerExpansion interface{}

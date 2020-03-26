@@ -7,14 +7,14 @@ import (
 
 var (
 	// ErrNotFound wraps provider specific not found errors.
-	ErrNotFound = newRetryError(errors.New("not found"), RetrySlow)
+	ErrNotFound = NewRetryError(errors.New("not found"), RetrySlow)
 
 	// ErrInProgress is returned if the action is in-progress, but otherwise unerrored.
-	ErrInProgress = newRetryError(errors.New("action in progress"), RetryFast)
+	ErrInProgress = NewRetryError(errors.New("action in progress"), RetryFast)
 
 	// ErrNodeInUse is returned when the action cannot be completed because the IP already
 	// has an IP.
-	ErrNodeInUse = newRetryError(errors.New("node in use"), RetrySlow)
+	ErrNodeInUse = NewRetryError(errors.New("node in use"), RetrySlow)
 )
 
 // Provider defines a platform which offers kubernetes VMs and floating ips.
@@ -31,4 +31,8 @@ type Provider interface {
 
 	// CreateIP creates a new floating IP.
 	CreateIP(ctx context.Context, region string) (string, error)
+
+	// EnsureDNSARecordSet ensures that the record set w/ name `recordName` contains all IPs listed in `ips`
+	// and no others.
+	EnsureDNSARecordSet(ctx context.Context, zone, recordName string, ips []string, ttl int) error
 }

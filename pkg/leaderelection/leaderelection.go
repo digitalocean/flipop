@@ -21,7 +21,7 @@ func LeaderElection(
 	namespace string,
 	resourceName string,
 	client kubernetes.Interface,
-	run func(ctx context.Context),
+	runs ...func(ctx context.Context),
 ) error {
 	var childCtx context.Context
 	var childCancel context.CancelFunc
@@ -86,11 +86,14 @@ func LeaderElection(
 				// If the parent context hasn't been canceled, we can be sure they haven't executed
 				// wg.Wait() yet, and it's safe to start.
 				childCtx, childCancel = context.WithCancel(ctx)
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					run(childCtx)
-				}()
+				wg.Add(len(runs))
+				for _, run := range runs {
+					run := run
+					go func() {
+						defer wg.Done()
+						run(childCtx)
+					}()
+				}
 			},
 			OnStoppedLeading: func() {
 				childLock.Lock()

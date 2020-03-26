@@ -191,6 +191,7 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 	prov := c.providers[k8sPool.Spec.Provider]
 	ipChange := pool.ipController.updateProvider(prov, k8sPool.Spec.Region)
 	pool.ipController.updateIPs(k8sPool.Spec.IPs, k8sPool.Spec.DesiredIPs)
+	pool.ipController.updateDNSSpec(k8sPool.Spec.DNSRecordSet)
 	if ipChange {
 		pool.ipController.start(c.ctx)
 	}

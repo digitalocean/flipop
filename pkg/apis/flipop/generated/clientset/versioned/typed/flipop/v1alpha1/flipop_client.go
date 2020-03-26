@@ -36,6 +36,7 @@ import (
 type FlipopV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	FloatingIPPoolsGetter
+	NodeDNSRecordSetsGetter
 }
 
 // FlipopV1alpha1Client is used to interact with features provided by the flipop.digitalocean.com group.
@@ -45,6 +46,10 @@ type FlipopV1alpha1Client struct {
 
 func (c *FlipopV1alpha1Client) FloatingIPPools(namespace string) FloatingIPPoolInterface {
 	return newFloatingIPPools(c, namespace)
+}
+
+func (c *FlipopV1alpha1Client) NodeDNSRecordSets(namespace string) NodeDNSRecordSetInterface {
+	return newNodeDNSRecordSets(c, namespace)
 }
 
 // NewForConfig creates a new FlipopV1alpha1Client for the given config.

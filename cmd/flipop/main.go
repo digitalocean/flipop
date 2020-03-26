@@ -10,6 +10,7 @@ import (
 	"github.com/digitalocean/flipop/pkg/floatingip"
 	"github.com/digitalocean/flipop/pkg/leaderelection"
 	logutil "github.com/digitalocean/flipop/pkg/log"
+	"github.com/digitalocean/flipop/pkg/nodedns"
 	"github.com/digitalocean/flipop/pkg/provider"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -92,6 +93,12 @@ func runMain(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stdout, "Failed to create Floating IP Pool controller: %s\n", err)
 		os.Exit(1)
 	}
+	nodednsCtrl, err := nodedns.NewController(config, providers, log)
+	if err != nil {
+		fmt.Fprintf(os.Stdout, "Failed to create NodeDNSRecordSet controller: %s\n", err)
+		os.Exit(1)
+	}
+
 	ns, _, err := config.Namespace()
 	clientConfig, err := config.ClientConfig()
 	if err != nil {
@@ -103,7 +110,7 @@ func runMain(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stdout, "creating kubernetes client: %s\n", err)
 		os.Exit(1)
 	}
-	leaderelection.LeaderElection(ctx, log, ns, leaderElectionResource, kubeCS, flipCtrl.Run)
+	leaderelection.LeaderElection(ctx, log, ns, leaderElectionResource, kubeCS, flipCtrl.Run, nodednsCtrl.Run)
 }
 
 func initProviders(log logrus.FieldLogger) map[string]provider.Provider {

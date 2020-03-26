@@ -9,6 +9,10 @@ spec:
   ips:
   - 192.168.1.1
   - 192.168.2.1
+  dnsRecordSet:
+    recordName: hello-world
+    zone: example.com
+    ttl: 120
   match:
     podNamespace: ingress
     podLabel: app=nginx-ingress,component=controller

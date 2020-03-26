@@ -1,0 +1,17 @@
+apiVersion: flipop.digitalocean.com/v1alpha1
+kind: NodeDNSRecordSet
+metadata:
+  name: ingress-nodes
+spec: 
+  provider: digitalocean
+  dnsRecordSet:
+    recordName: nodes
+    zone: example.com
+    ttl: 120 
+  match:
+    podNamespace: ingress
+    podLabel: app=nginx-ingress,component=controller
+    nodeLabel: doks.digitalocean.com/node-pool=work
+    tolerations:
+      - effect: NoSchedule
+        key: node.kubernetes.io/unschedulable
