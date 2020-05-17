@@ -7,10 +7,10 @@ rules:
   resources: ["pods", "nodes"]
   verbs: ["get", "watch", "list"]
 - apiGroups: ["flipop.digitalocean.com"]
-  resources: ["floatingippools", "nodednsrecordsets"]
+  resources: ["nodednsrecordsets"]
   verbs: ["get", "watch", "list"]
 - apiGroups: ["flipop.digitalocean.com"]
-  resources: ["floatingippools/status", "nodednsrecordsets/status"]
+  resources: ["floatingippools", "floatingippools/status", "nodednsrecordsets/status"]
   verbs: ["get", "watch", "list", "update"]
 
 ---
