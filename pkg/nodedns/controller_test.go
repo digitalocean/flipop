@@ -37,10 +37,12 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		},
 	}
 	type setDNSCall struct {
-		ips    []string
-		err    error
-		exec   func(c *Controller)
-		cancel bool
+		ips        []string
+		err        error
+		exec       func(c *Controller)
+		cancel     bool
+		zone       string
+		recordName string
 	}
 	tcs := []struct {
 		name             string
@@ -190,6 +192,34 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				{ips: []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"}, cancel: true},
 			},
 		},
+		{
+			name:     "target updated",
+			resource: nodeDNS,
+			initialObjs: []metav1.Object{
+				kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
+					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+				kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
+					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
+			},
+			expectSetDNSCall: []setDNSCall{
+				{
+					ips: []string{"10.0.0.1", "10.0.0.3"},
+					exec: func(c *Controller) {
+						updatedNodeDNS := nodeDNS.DeepCopy()
+						updatedNodeDNS.Spec.DNSRecordSet.RecordName = "ingress"
+						updatedNodeDNS.Spec.DNSRecordSet.Zone = "argolis.cluster"
+						_, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Update(updatedNodeDNS)
+						require.NoError(t, err)
+					},
+				},
+				{
+					ips:        []string{"10.0.0.1", "10.0.0.3"},
+					cancel:     true,
+					recordName: "ingress",
+					zone:       "argolis.cluster",
+				},
+			},
+		},
 	}
 	for _, tc := range tcs {
 		tc := tc
@@ -215,8 +245,16 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 							cancel() // this is the last expected call
 						}
 						require.ElementsMatch(t, expected.ips, ips)
-						require.Equal(t, nodeDNS.Spec.DNSRecordSet.Zone, zone)
-						require.Equal(t, nodeDNS.Spec.DNSRecordSet.RecordName, recordName)
+						if expected.zone != "" {
+							require.Equal(t, expected.zone, zone)
+						} else {
+							require.Equal(t, nodeDNS.Spec.DNSRecordSet.Zone, zone)
+						}
+						if expected.recordName != "" {
+							require.Equal(t, expected.recordName, recordName)
+						} else {
+							require.Equal(t, nodeDNS.Spec.DNSRecordSet.RecordName, recordName)
+						}
 						require.Equal(t, nodeDNS.Spec.DNSRecordSet.TTL, ttl)
 						if expected.exec != nil {
 							expected.exec(c)

@@ -246,7 +246,10 @@ func (d *dnsEnablerDisabler) update(k8s *flipopv1alpha1.NodeDNSRecordSet, provs 
 	d.lock.Lock()
 	defer d.lock.Unlock()
 	if d.matchController != nil &&
-		(!d.matchController.IsCriteriaEqual(&k8s.Spec.Match) || d.provider != provs[k8s.Spec.Provider]) {
+		(!d.matchController.IsCriteriaEqual(&k8s.Spec.Match) ||
+			d.provider != provs[k8s.Spec.Provider] ||
+			!reflect.DeepEqual(d.k8s.Spec.DNSRecordSet, k8s.Spec.DNSRecordSet)) {
+		d.log.Info("NodeDNSRecordSet updated; restarting controller.")
 		d.matchController.Stop()
 		d.matchController = nil
 		d.activeNodes = make(map[string]*corev1.Node)
@@ -285,7 +288,11 @@ func (d *dnsEnablerDisabler) applyDNS() {
 	if d.k8s.Spec.AddressType != "" {
 		addressType = d.k8s.Spec.AddressType
 	}
-	ll := d.log.WithField("address_type", string(addressType))
+	ll := d.log.WithFields(logrus.Fields{
+		"address_type": string(addressType),
+		"zone":         d.k8s.Spec.DNSRecordSet.Zone,
+		"record_name":  d.k8s.Spec.DNSRecordSet.RecordName,
+	})
 	ll.Debug("ensuring provider dnsRecordSet records")
 	var ips []string
 	// NOTE, we don't watch nodes for updates to their address list. Since these are typically
