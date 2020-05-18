@@ -26,6 +26,7 @@ func TestIPControllerReconcileDesiredIPs(t *testing.T) {
 		name             string
 		desiredIPs       int
 		existingIPs      []string
+		pendingIPs       []string
 		region           string
 		responses        []createIPRes
 		expectPendingIPs []string
@@ -36,6 +37,14 @@ func TestIPControllerReconcileDesiredIPs(t *testing.T) {
 			desiredIPs:       3,
 			existingIPs:      []string{"192.168.1.1"},
 			responses:        []createIPRes{{ip: "192.168.1.2", region: "earth"}, {ip: "192.168.1.3", region: "earth"}},
+			expectPendingIPs: []string{"192.168.1.2", "192.168.1.3"},
+		},
+		{
+			name:             "already have pending ips",
+			desiredIPs:       3,
+			existingIPs:      []string{"192.168.1.1"},
+			pendingIPs:       []string{"192.168.1.2", "192.168.1.3"},
+			responses:        []createIPRes{},
 			expectPendingIPs: []string{"192.168.1.2", "192.168.1.3"},
 		},
 		{
@@ -53,6 +62,7 @@ func TestIPControllerReconcileDesiredIPs(t *testing.T) {
 			i := &ipController{
 				desiredIPs: tc.desiredIPs,
 				ips:        tc.existingIPs,
+				pendingIPs: tc.pendingIPs,
 				region:     tc.region,
 				provider: &provider.MockProvider{
 					CreateIPFunc: func(_ context.Context, region string) (string, error) {

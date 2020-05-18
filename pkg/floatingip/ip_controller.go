@@ -265,7 +265,7 @@ func (i *ipController) reconcileDesiredIPs(ctx context.Context) {
 		return
 	}
 	// Acquire new IPs if needed. If this fails, we can try again next reconcile.
-	for j := len(i.ips); j < i.desiredIPs; j++ {
+	for j := len(i.ips) + len(i.pendingIPs); j < i.desiredIPs; j++ {
 		i.log.Info("requesting ip from provider")
 		i.updateStatus = true
 		ip, err := i.provider.CreateIP(ctx, i.region)
