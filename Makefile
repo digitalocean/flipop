@@ -3,9 +3,9 @@ COMMIT ?= $(shell git rev-parse --short HEAD)
 SHELL=/bin/bash -o pipefail
 
 image: dev-image
-	docker build -t digitaloceanappsail/flipop:$(COMMIT) .
+	docker build -t digitaloceanapps/flipop:$(COMMIT) .
 ifdef latest
-	docker tag digitaloceanappsail/flipop:$(COMMIT) digitaloceanappsail/flipop:latest
+	docker tag digitaloceanapps/flipop:$(COMMIT) digitaloceanapps/flipop:latest
 endif
 
 # dev-image is the builder image for the production image, and also provides everything necessary
@@ -25,9 +25,9 @@ generate-k8s:
 		--go-header-file=hack/boilerplate.go.txt
 
 image-push: image
-	docker push digitaloceanappsail/flipop
+	docker push digitaloceanapps/flipop
 ifdef latest
-	docker push digitaloceanappsail/flipop:latest
+	docker push digitaloceanapps/flipop:latest
 endif
 
 test: dev-image

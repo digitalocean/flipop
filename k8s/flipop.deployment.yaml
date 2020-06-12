@@ -26,7 +26,7 @@ spec:
             secretKeyRef:
               key: DIGITALOCEAN_ACCESS_TOKEN
               name: flipop
-        image: digitaloceanappsail/flipop:latest
+        image: digitaloceanapps/flipop:latest
         imagePullPolicy: Always
         name: flipop
       dnsPolicy: ClusterFirst
