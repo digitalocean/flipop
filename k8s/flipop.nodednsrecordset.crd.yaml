@@ -16,8 +16,6 @@ spec:
           properties:
             spec:
               type: object
-              required:
-              - provider
               properties:
                 addressType:
                   type: string
@@ -45,6 +43,8 @@ spec:
                             type: string
                 dnsRecordSet:
                   type: object
+                  required:
+                  - provider
                   properties:
                     provider:
                       type: string
