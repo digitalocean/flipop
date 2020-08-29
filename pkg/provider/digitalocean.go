@@ -24,8 +24,6 @@ const (
 	// doActionExpiration defines how long we'log hold onto an action before expiring it.
 	doActionExpiration = 1 * time.Hour
 
-	dnsRecordTypeA = "A"
-
 	dnsRecordsPerPage = 200
 )
 
@@ -258,7 +256,8 @@ func (do *digitalOcean) toRetryError(err error, res *godo.Response) error {
 			return NewRetryError(err, RetryFast)
 		}
 	}
-	if nErr, ok := errors.Unwrap(err).(net.Error); ok {
+	var nErr net.Error
+	if errors.As(err, &nErr) {
 		if nErr.Temporary() {
 			return NewRetryError(err, RetryFast)
 		}

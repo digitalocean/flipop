@@ -17,6 +17,10 @@ var (
 	ErrNodeInUse = NewRetryError(errors.New("node in use"), RetrySlow)
 )
 
+const (
+	dnsRecordTypeA = "A"
+)
+
 // BaseProvider describes all providers.
 type BaseProvider interface {
 	// GetProviderName returns an identifier for the provider which can be used in resources.
