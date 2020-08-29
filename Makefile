@@ -25,7 +25,7 @@ generate-k8s:
 		--go-header-file=hack/boilerplate.go.txt
 
 image-push: image
-	docker push digitaloceanapps/flipop
+	docker push digitaloceanapps/flipop:$(COMMIT)
 ifdef latest
 	docker push digitaloceanapps/flipop:latest
 endif

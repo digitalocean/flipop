@@ -15,5 +15,5 @@ jobs:
     - name: Test
       run: make test
 
-    - name: Build images
-      run: make image
+    - name: Build and push images
+      run: make image-push
