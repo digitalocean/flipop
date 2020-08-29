@@ -45,7 +45,7 @@ type FloatingIPPoolSpec struct {
 	// DesiredIPs is 0 or omitted, all IPs in the IPs field will be used.
 	DesiredIPs int `json:"desiredIPs,omitempty"`
 
-	// Provider describes the provider hosting the specified IPs. It's assumed all matching nodes
+	// BaseProvider describes the provider hosting the specified IPs. It's assumed all matching nodes
 	// are associated with the specified provider.
 	Provider string `json:"provider,omitempty"`
 
@@ -100,6 +100,7 @@ type IPStatus struct {
 
 // DNSRecordSet describes parameters for creating/updating a DNS record set.
 type DNSRecordSet struct {
+	Provider   string `json:"provider"`
 	Zone       string `json:"zone"`
 	RecordName string `json:"recordName"`
 	TTL        int    `json:"ttl"`
@@ -160,9 +161,6 @@ type NodeDNSRecordSetStatus struct {
 
 // NodeDNSRecordSetSpec defines the desired state of NodeDNSRecordSet.
 type NodeDNSRecordSetSpec struct {
-	// Provider describes the provider hosting the DNS zone.
-	Provider string `json:"provider"`
-
 	// Match describes the set of nodes to assign DNS entries.
 	Match Match `json:"match"`
 

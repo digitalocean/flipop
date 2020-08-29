@@ -32,8 +32,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		Spec: flipopv1alpha1.NodeDNSRecordSetSpec{
 			DNSRecordSet: kt.MakeDNS(),
 			// Simple match only cares about nodes. nodematch.Controller is well tested elsewhere.
-			Match:    flipopv1alpha1.Match{NodeLabel: "system=wolf359"},
-			Provider: "mock",
+			Match: flipopv1alpha1.Match{NodeLabel: "system=wolf359"},
 		},
 	}
 	type setDNSCall struct {
@@ -103,8 +102,10 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: flipopv1alpha1.NodeDNSRecordSetSpec{
-					Match:    flipopv1alpha1.Match{NodeLabel: "system=wolf359"},
-					Provider: "mock",
+					Match: flipopv1alpha1.Match{NodeLabel: "system=wolf359"},
+					DNSRecordSet: flipopv1alpha1.DNSRecordSet{
+						Provider: provider.Mock,
+					},
 				},
 			},
 			expectError: "invalid dnsRecordSet specification",
@@ -121,7 +122,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 					ips: []string{"10.0.0.1"},
 					exec: func(c *Controller) {
 						updatedNodeDNS := nodeDNS.DeepCopy()
-						updatedNodeDNS.Spec.Provider = "unknown"
+						updatedNodeDNS.Spec.DNSRecordSet.Provider = "unknown"
 						_, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Update(updatedNodeDNS)
 						require.NoError(t, err)
 					},
@@ -235,8 +236,8 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				ctx:      ctx,
 				log:      log,
 			}
-			c.providers = map[string]provider.Provider{
-				"mock": &provider.MockProvider{
+			c.providers = map[string]provider.BaseProvider{
+				provider.Mock: &provider.MockProvider{MockDNSProvider: &provider.MockDNSProvider{
 					EnsureDNSARecordSetFunc: func(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
 						require.NotEmpty(t, tc.expectSetDNSCall, "unexpected call to EnsureDNSARecordSet")
 						expected := tc.expectSetDNSCall[0]
@@ -261,7 +262,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 						}
 						return expected.err
 					},
-				},
+				}},
 			}
 
 			if tc.expectError != "" {

@@ -26,7 +26,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 	tcs := []struct {
 		name                  string
 		objs                  []metav1.Object
-		manip                 func(*flipopv1alpha1.FloatingIPPool)
+		manip                 func(*flipopv1alpha1.FloatingIPPool, *Controller)
 		initialIPAssignment   map[string]string
 		createIPs             []string
 		expectError           string
@@ -56,6 +56,27 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			expectSetDNSCalls:   1,
 		},
 		{
+			name: "happy path with other DNS provider",
+			objs: []metav1.Object{
+				kt.MakeNode("rio-grande", "mock://1", kt.MarkReady, kt.SetLabels(kt.MatchingNodeLabels)),
+				kt.MakePod("benjamin-sisko", "rio-grande",
+					kt.MarkReady, kt.MarkRunning, kt.SetNamespace("star-fleet"), kt.SetLabels(kt.MatchingPodLabels)),
+				kt.MakePod("worf", "orinoco",
+					kt.MarkReady, kt.MarkRunning, kt.SetNamespace("star-fleet"), kt.SetLabels(kt.MatchingPodLabels)),
+			},
+			expectIPState: map[flipopv1alpha1.IPState]int{
+				flipopv1alpha1.IPStateActive:     1,
+				flipopv1alpha1.IPStateUnassigned: 1,
+			},
+			expectAssignIPCalls: 1,
+			expectSetDNSCalls:   1,
+			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
+				f.Spec.DNSRecordSet.Provider = "other"
+				c.providers["other"] = c.providers[provider.Mock].(*provider.MockProvider).MockDNSProvider
+				c.providers[provider.Mock] = c.providers[provider.Mock].(*provider.MockProvider).MockIPProvider
+			},
+		},
+		{
 			name: "create new ips",
 			objs: []metav1.Object{
 				kt.MakeNode("rio-grande", "mock://1", kt.MarkReady, kt.SetLabels(kt.MatchingNodeLabels)),
@@ -63,7 +84,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 					kt.MarkReady, kt.MarkRunning, kt.SetNamespace("star-fleet"), kt.SetLabels(kt.MatchingPodLabels)),
 			},
 			createIPs: []string{"10.0.1.1", "10.0.2.2"},
-			manip: func(f *flipopv1alpha1.FloatingIPPool) {
+			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.IPs = nil
 				f.Spec.DesiredIPs = 2
 			},
@@ -109,7 +130,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				kt.MakePod("worf", "ganges",
 					kt.MarkReady, kt.MarkRunning, kt.SetNamespace("star-fleet"), kt.SetLabels(kt.MatchingPodLabels)),
 			},
-			manip: func(f *flipopv1alpha1.FloatingIPPool) {
+			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.Match.NodeLabel = ""
 			},
 			expectIPState: map[flipopv1alpha1.IPState]int{
@@ -147,7 +168,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				kt.MakeNode("orinoco", "mock://3",
 					kt.MarkReady, kt.SetLabels(kt.MatchingNodeLabels), kt.SetTaints(kt.NoSchedule)),
 			},
-			manip: func(f *flipopv1alpha1.FloatingIPPool) {
+			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.Match.PodNamespace = ""
 				f.Spec.Match.PodLabel = ""
 			},
@@ -172,7 +193,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				"192.168.1.1": "mock://3", // orinoco is tainted
 				"172.16.2.2":  "mock://5",
 			},
-			manip: func(f *flipopv1alpha1.FloatingIPPool) {
+			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.Match.PodNamespace = ""
 				f.Spec.Match.PodLabel = ""
 			},
@@ -191,7 +212,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 		{
 			name: "invalid pod selector",
 			objs: []metav1.Object{},
-			manip: func(f *flipopv1alpha1.FloatingIPPool) {
+			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.Match.PodLabel = "#invalid#"
 			},
 			expectError: "Error parsing pod selector: unable to parse requirement: " +
@@ -202,7 +223,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 		{
 			name: "invalid node selector",
 			objs: []metav1.Object{},
-			manip: func(f *flipopv1alpha1.FloatingIPPool) {
+			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.Match.NodeLabel = "#invalid#"
 			},
 			expectError: "Error parsing node selector: unable to parse requirement: " +
@@ -213,7 +234,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 		{
 			name: "unknown provider",
 			objs: []metav1.Object{},
-			manip: func(f *flipopv1alpha1.FloatingIPPool) {
+			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.Provider = "Ferengi"
 			},
 			expectError: "unknown provider \"Ferengi\"",
@@ -221,11 +242,28 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 		{
 			name: "no ips or desired ips",
 			objs: []metav1.Object{},
-			manip: func(f *flipopv1alpha1.FloatingIPPool) {
+			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.IPs = nil
 				f.Spec.DesiredIPs = 0
 			},
 			expectError: "ips or desiredIPs must be provided",
+		},
+		{
+			name: "main provider does not support dns; no dns provider given",
+			objs: []metav1.Object{},
+			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
+				f.Spec.DNSRecordSet.Provider = ""
+				c.providers[provider.Mock] = c.providers[provider.Mock].(*provider.MockProvider).MockIPProvider
+			},
+			expectError: "FloatingIPPool dns referenced provider without dns capability",
+		},
+		{
+			name: "main provider does not support ip",
+			objs: []metav1.Object{},
+			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
+				c.providers[provider.Mock] = c.providers[provider.Mock].(*provider.MockProvider).MockDNSProvider
+			},
+			expectError: "provider \"mock\" does not provide floating IPs",
 		},
 	}
 	for _, tc := range tcs {
@@ -234,9 +272,6 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			k8s := makeFloatingIPPool()
-			if tc.manip != nil {
-				tc.manip(k8s)
-			}
 
 			ipAssignment := make(map[string]string)
 			for ip, providerIP := range tc.initialIPAssignment {
@@ -252,33 +287,37 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				flipopCS: flipCSFake.NewSimpleClientset(k8s),
 				// Use assert because provider actions run in a goroutine and testify will miss the
 				// panic from require.
-				providers: map[string]provider.Provider{
+				providers: map[string]provider.BaseProvider{
 					"mock": &provider.MockProvider{
-						IPToProviderIDFunc: func(ctx context.Context, ip string) (string, error) {
-							return ipAssignment[ip], nil
+						MockIPProvider: &provider.MockIPProvider{
+							IPToProviderIDFunc: func(ctx context.Context, ip string) (string, error) {
+								return ipAssignment[ip], nil
+							},
+							AssignIPFunc: func(ctx context.Context, ip, providerID string) error {
+								assignIPCalls++
+								ipAssignment[ip] = providerID
+								return nil
+							},
+							CreateIPFunc: func(ctx context.Context, region string) (string, error) {
+								assert.GreaterOrEqual(t, len(tc.createIPs), 1, "unexpected CreateIP call")
+								ip := tc.createIPs[0]
+								tc.createIPs = tc.createIPs[1:]
+								return ip, nil
+							},
 						},
-						AssignIPFunc: func(ctx context.Context, ip, providerID string) error {
-							assignIPCalls++
-							ipAssignment[ip] = providerID
-							return nil
-						},
-						CreateIPFunc: func(ctx context.Context, region string) (string, error) {
-							assert.GreaterOrEqual(t, len(tc.createIPs), 1, "unexpected CreateIP call")
-							ip := tc.createIPs[0]
-							tc.createIPs = tc.createIPs[1:]
-							return ip, nil
-						},
-						EnsureDNSARecordSetFunc: func(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
-							desired := k8s.Spec.DesiredIPs
-							if desired == 0 {
-								desired = len(k8s.Spec.IPs)
-							}
-							assert.Len(t, ips, desired)
-							assert.Equal(t, k8s.Spec.DNSRecordSet.Zone, zone)
-							assert.Equal(t, k8s.Spec.DNSRecordSet.RecordName, recordName)
-							assert.Equal(t, k8s.Spec.DNSRecordSet.TTL, ttl)
-							ensureDNSARecordSetCalls++
-							return nil
+						MockDNSProvider: &provider.MockDNSProvider{
+							EnsureDNSARecordSetFunc: func(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
+								desired := k8s.Spec.DesiredIPs
+								if desired == 0 {
+									desired = len(k8s.Spec.IPs)
+								}
+								assert.Len(t, ips, desired)
+								assert.Equal(t, k8s.Spec.DNSRecordSet.Zone, zone)
+								assert.Equal(t, k8s.Spec.DNSRecordSet.RecordName, recordName)
+								assert.Equal(t, k8s.Spec.DNSRecordSet.TTL, ttl)
+								ensureDNSARecordSetCalls++
+								return nil
+							},
 						},
 					},
 				},
@@ -286,6 +325,11 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				ctx:   ctx,
 				log:   log,
 			}
+
+			if tc.manip != nil {
+				tc.manip(k8s, c)
+			}
+
 			c.updateOrAdd(k8s)
 			if tc.expectError != "" {
 				updatedK8s, err := c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).Get(k8s.Name, metav1.GetOptions{})

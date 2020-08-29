@@ -57,7 +57,7 @@ func (t *doTokenSource) Token() (*oauth2.Token, error) {
 }
 
 // NewDigitalOcean returns a new provider for DigitalOcean.
-func NewDigitalOcean(log logrus.FieldLogger) Provider {
+func NewDigitalOcean(log logrus.FieldLogger) BaseProvider {
 	token := os.Getenv("DIGITALOCEAN_ACCESS_TOKEN")
 	if token == "" {
 		return nil
@@ -76,6 +76,11 @@ func NewDigitalOcean(log logrus.FieldLogger) Provider {
 		floatingIPActions: make(map[string]*doAction),
 		log:               log.WithField("provider", "digitalocean"),
 	}
+}
+
+// GetProviderName returns an identifier for the provider which can be used in resources.
+func (do *digitalOcean) GetProviderName() string {
+	return DigitalOcean
 }
 
 // IPToProviderID loads the current assignment (as Kubernetes listed in Kubernetes core v1

@@ -57,7 +57,7 @@ type Controller struct {
 	kubeCS   kubernetes.Interface
 	flipopCS flipopCS.Interface
 
-	providers map[string]provider.Provider
+	providers map[string]provider.BaseProvider
 
 	children map[string]*dnsEnablerDisabler
 	lock     sync.Mutex
@@ -69,7 +69,7 @@ type Controller struct {
 // NewController creates a new Controller.
 func NewController(
 	kubeConfig clientcmd.ClientConfig,
-	providers map[string]provider.Provider,
+	providers map[string]provider.BaseProvider,
 	log logrus.FieldLogger,
 ) (*Controller, error) {
 	c := &Controller{
@@ -177,10 +177,22 @@ func (c *Controller) updateOrAdd(nrs *flipopv1alpha1.NodeDNSRecordSet) {
 }
 
 func (c *Controller) validate(log logrus.FieldLogger, nrs *flipopv1alpha1.NodeDNSRecordSet) bool {
-	if _, ok := c.providers[nrs.Spec.Provider]; !ok {
+	prov, ok := c.providers[nrs.Spec.DNSRecordSet.Provider]
+	if !ok {
 		log.Warn("NodeDNSRecordSet referenced unknown provider")
 		status := &flipopv1alpha1.NodeDNSRecordSetStatus{
-			Error: fmt.Sprintf("unknown provider %q", nrs.Spec.Provider)}
+			Error: fmt.Sprintf("unknown provider %q", nrs.Spec.DNSRecordSet.Provider)}
+		err := updateStatus(c.flipopCS, nrs.Name, nrs.Namespace, status)
+		if err != nil {
+			c.log.WithError(err).Error("updating status")
+		}
+		return false
+	}
+	if _, ok := prov.(provider.DNSProvider); !ok {
+		log.WithField("provider", nrs.Spec.DNSRecordSet.Provider).
+			Warn("NodeDNSRecordSet referenced provider without dns capability")
+		status := &flipopv1alpha1.NodeDNSRecordSetStatus{
+			Error: fmt.Sprintf("provider %q does not provide DNS", nrs.Spec.DNSRecordSet.Provider)}
 		err := updateStatus(c.flipopCS, nrs.Name, nrs.Namespace, status)
 		if err != nil {
 			c.log.WithError(err).Error("updating status")
@@ -215,7 +227,7 @@ func (c *Controller) validate(log logrus.FieldLogger, nrs *flipopv1alpha1.NodeDN
 type dnsEnablerDisabler struct {
 	lock            sync.Mutex
 	activeNodes     map[string]*corev1.Node
-	provider        provider.Provider
+	provider        provider.DNSProvider
 	k8s             *flipopv1alpha1.NodeDNSRecordSet
 	ctx             context.Context
 	log             logrus.FieldLogger
@@ -242,19 +254,19 @@ func newDNSEnablerDisabler(
 	return d
 }
 
-func (d *dnsEnablerDisabler) update(k8s *flipopv1alpha1.NodeDNSRecordSet, provs map[string]provider.Provider) {
+func (d *dnsEnablerDisabler) update(k8s *flipopv1alpha1.NodeDNSRecordSet, provs map[string]provider.BaseProvider) {
 	d.lock.Lock()
 	defer d.lock.Unlock()
 	if d.matchController != nil &&
 		(!d.matchController.IsCriteriaEqual(&k8s.Spec.Match) ||
-			d.provider != provs[k8s.Spec.Provider] ||
+			d.provider != provs[k8s.Spec.DNSRecordSet.Provider] ||
 			!reflect.DeepEqual(d.k8s.Spec.DNSRecordSet, k8s.Spec.DNSRecordSet)) {
 		d.log.Info("NodeDNSRecordSet updated; restarting controller.")
 		d.matchController.Stop()
 		d.matchController = nil
 		d.activeNodes = make(map[string]*corev1.Node)
 	}
-	d.provider = provs[k8s.Spec.Provider]
+	d.provider = provs[k8s.Spec.DNSRecordSet.Provider].(provider.DNSProvider)
 	if d.matchController == nil {
 		d.matchController = nodematch.NewController(d.log, d.kubeCS, d)
 		d.matchController.SetCriteria(&k8s.Spec.Match)

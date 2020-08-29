@@ -17,8 +17,16 @@ var (
 	ErrNodeInUse = NewRetryError(errors.New("node in use"), RetrySlow)
 )
 
-// Provider defines a platform which offers kubernetes VMs and floating ips.
-type Provider interface {
+// BaseProvider describes all providers.
+type BaseProvider interface {
+	// GetProviderName returns an identifier for the provider which can be used in resources.
+	GetProviderName() string
+}
+
+// IPProvider defines a platform which offers kubernetes VMs and floating ips.
+type IPProvider interface {
+	BaseProvider
+
 	// IPToProviderID loads the current assignment (as Kubernetes listed in Kubernetes core v1
 	// NodeSpec.ProviderID for a floating IP.
 	IPToProviderID(ctx context.Context, ip string) (string, error)
@@ -31,6 +39,11 @@ type Provider interface {
 
 	// CreateIP creates a new floating IP.
 	CreateIP(ctx context.Context, region string) (string, error)
+}
+
+// DNSProvider defines a service which can register and serve DNS records.
+type DNSProvider interface {
+	BaseProvider
 
 	// EnsureDNSARecordSet ensures that the record set w/ name `recordName` contains all IPs listed in `ips`
 	// and no others.

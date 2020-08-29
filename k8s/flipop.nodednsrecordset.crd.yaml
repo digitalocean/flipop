@@ -19,8 +19,6 @@ spec:
               required:
               - provider
               properties:
-                provider:
-                  type: string
                 addressType:
                   type: string
                 match:
@@ -48,6 +46,8 @@ spec:
                 dnsRecordSet:
                   type: object
                   properties:
+                    provider:
+                      type: string
                     zone:
                       type: string
                     recordName:

@@ -55,7 +55,7 @@ type Controller struct {
 	kubeCS   kubernetes.Interface
 	flipopCS flipopCS.Interface
 
-	providers map[string]provider.Provider
+	providers map[string]provider.BaseProvider
 
 	pools    map[string]floatingIPPool
 	poolLock sync.Mutex
@@ -70,7 +70,7 @@ type floatingIPPool struct {
 }
 
 // NewController creates a new Controller.
-func NewController(kubeConfig clientcmd.ClientConfig, providers map[string]provider.Provider, log logrus.FieldLogger) (*Controller, error) {
+func NewController(kubeConfig clientcmd.ClientConfig, providers map[string]provider.BaseProvider, log logrus.FieldLogger) (*Controller, error) {
 	c := &Controller{
 		providers: providers,
 		pools:     make(map[string]floatingIPPool),
@@ -188,8 +188,12 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 		return
 	}
 
-	prov := c.providers[k8sPool.Spec.Provider]
-	ipChange := pool.ipController.updateProvider(prov, k8sPool.Spec.Region)
+	prov := c.providers[k8sPool.Spec.Provider].(provider.IPProvider)
+	dnsProv, _ := prov.(provider.DNSProvider)
+	if k8sPool.Spec.DNSRecordSet != nil && k8sPool.Spec.DNSRecordSet.Provider != "" {
+		dnsProv, _ = c.providers[k8sPool.Spec.DNSRecordSet.Provider].(provider.DNSProvider)
+	}
+	ipChange := pool.ipController.updateProviders(prov, dnsProv, k8sPool.Spec.Region)
 	pool.ipController.updateIPs(k8sPool.Spec.IPs, k8sPool.Spec.DesiredIPs)
 	pool.ipController.updateDNSSpec(k8sPool.Spec.DNSRecordSet)
 	if ipChange {
@@ -198,9 +202,16 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 }
 
 func (c *Controller) validate(log logrus.FieldLogger, k8sPool *flipopv1alpha1.FloatingIPPool) bool {
-	if _, ok := c.providers[k8sPool.Spec.Provider]; !ok {
+	prov, ok := c.providers[k8sPool.Spec.Provider]
+	if !ok {
 		c.updateStatus(k8sPool, fmt.Sprintf("unknown provider %q", k8sPool.Spec.Provider))
 		log.Warn("FloatingIPPool referenced unknown provider")
+		return false
+	}
+	if _, ok := prov.(provider.IPProvider); !ok {
+		c.updateStatus(k8sPool, fmt.Sprintf("provider %q does not provide floating IPs", k8sPool.Spec.Provider))
+		log.WithField("provider", k8sPool.Spec.Provider).
+			Warn("FloatingIPPool referenced provider that does not support floating IPs")
 		return false
 	}
 	if len(k8sPool.Spec.IPs) == 0 && k8sPool.Spec.DesiredIPs == 0 {
@@ -213,6 +224,18 @@ func (c *Controller) validate(log logrus.FieldLogger, k8sPool *flipopv1alpha1.Fl
 		c.updateStatus(k8sPool, "Error "+err.Error())
 		log.WithError(err).Warn("FloatingIPPool had invalid match criteria")
 		return false
+	}
+	if k8sPool.Spec.DNSRecordSet != nil {
+		dnsProv, ok := c.providers[k8sPool.Spec.DNSRecordSet.Provider]
+		if !ok {
+			dnsProv = prov
+		}
+		if _, ok := dnsProv.(provider.DNSProvider); !ok {
+			c.updateStatus(k8sPool, "FloatingIPPool dns referenced provider without dns capability")
+			log.WithError(err).WithField("provider", dnsProv.GetProviderName()).
+				Warn("FloatingIPPool dns referenced provider without dns capability")
+			return false
+		}
 	}
 	return true
 }
