@@ -23,7 +23,7 @@ func NewCloudflare(log logrus.FieldLogger) (DNSProvider, error) {
 		return nil, nil
 	}
 	api, err := cloudflare.NewWithAPIToken(token)
-	return &cloudflareDNS{api: api}, err
+	return &cloudflareDNS{api: api, log: log}, err
 }
 
 func (c *cloudflareDNS) GetProviderName() string {
