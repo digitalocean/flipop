@@ -64,7 +64,7 @@ func TestIPControllerReconcileDesiredIPs(t *testing.T) {
 				ips:        tc.existingIPs,
 				pendingIPs: tc.pendingIPs,
 				region:     tc.region,
-				provider: &provider.MockProvider{
+				provider: &provider.MockIPProvider{
 					CreateIPFunc: func(_ context.Context, region string) (string, error) {
 						require.GreaterOrEqual(t, len(tc.responses), 1, "unexpected call to CreateIPFunc")
 						require.Equal(t, tc.region, region)
@@ -209,7 +209,7 @@ func TestIPControllerReconcileIPStatus(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			i := newIPController(logrus.New(), nil, nil)
-			i.updateProvider(&provider.MockProvider{
+			i.updateProviders(&provider.MockIPProvider{
 				IPToProviderIDFunc: func(_ context.Context, ip string) (string, error) {
 					require.GreaterOrEqual(t, len(tc.responses), 1, "unexpected call to IPToProviderIDFunc")
 					require.Equal(t, tc.responses[0].ip, ip)
@@ -218,7 +218,7 @@ func TestIPControllerReconcileIPStatus(t *testing.T) {
 					tc.responses = tc.responses[1:]
 					return providerID, err
 				},
-			}, "")
+			}, nil, "")
 			i.ips = tc.ips
 			if tc.setup != nil {
 				tc.setup(i)
@@ -307,7 +307,7 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			i := newIPController(logrus.New(), nil, nil)
-			i.updateProvider(&provider.MockProvider{
+			i.updateProviders(&provider.MockIPProvider{
 				AssignIPFunc: func(_ context.Context, ip string, providerID string) error {
 					require.GreaterOrEqual(t, len(tc.responses), 1, "unexpected call to AssignIPFunc")
 					require.Equal(t, tc.responses[0].ip, ip)
@@ -316,7 +316,7 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 					tc.responses = tc.responses[1:]
 					return err
 				},
-			}, "")
+			}, nil, "")
 			for _, ip := range tc.assignableIPs {
 				i.assignableIPs.Add(ip, true)
 			}

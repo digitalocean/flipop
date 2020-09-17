@@ -15,5 +15,12 @@ jobs:
     - name: Test
       run: make test
 
-    - name: Build images
-      run: make image
+    - name: Docker Login
+      env:
+        DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      run: |
+        echo "${DOCKER_PASSWORD}" | docker login --username "${DOCKER_USERNAME}" --password-stdin
+
+    - name: Build and push images
+      run: make image-push

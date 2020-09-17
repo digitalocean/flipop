@@ -113,11 +113,18 @@ func runMain(cmd *cobra.Command, args []string) {
 	leaderelection.LeaderElection(ctx, log, ns, leaderElectionResource, kubeCS, flipCtrl.Run, nodednsCtrl.Run)
 }
 
-func initProviders(log logrus.FieldLogger) map[string]provider.Provider {
-	out := make(map[string]provider.Provider)
+func initProviders(log logrus.FieldLogger) map[string]provider.BaseProvider {
+	out := make(map[string]provider.BaseProvider)
 	do := provider.NewDigitalOcean(log)
 	if do != nil {
-		out[provider.DigitalOcean] = do
+		out[do.GetProviderName()] = do
+	}
+	cf, err := provider.NewCloudflare(log)
+	if err != nil {
+		log.WithError(err).Fatal("initializing Cloudflare provider")
+	}
+	if cf != nil {
+		out[cf.GetProviderName()] = cf
 	}
 	return out
 }

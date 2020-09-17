@@ -16,11 +16,7 @@ spec:
           properties:
             spec:
               type: object
-              required:
-              - provider
               properties:
-                provider:
-                  type: string
                 addressType:
                   type: string
                 match:
@@ -47,7 +43,11 @@ spec:
                             type: string
                 dnsRecordSet:
                   type: object
+                  required:
+                  - provider
                   properties:
+                    provider:
+                      type: string
                     zone:
                       type: string
                     recordName:

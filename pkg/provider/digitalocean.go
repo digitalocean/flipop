@@ -24,8 +24,6 @@ const (
 	// doActionExpiration defines how long we'log hold onto an action before expiring it.
 	doActionExpiration = 1 * time.Hour
 
-	dnsRecordTypeA = "A"
-
 	dnsRecordsPerPage = 200
 )
 
@@ -57,7 +55,7 @@ func (t *doTokenSource) Token() (*oauth2.Token, error) {
 }
 
 // NewDigitalOcean returns a new provider for DigitalOcean.
-func NewDigitalOcean(log logrus.FieldLogger) Provider {
+func NewDigitalOcean(log logrus.FieldLogger) BaseProvider {
 	token := os.Getenv("DIGITALOCEAN_ACCESS_TOKEN")
 	if token == "" {
 		return nil
@@ -76,6 +74,11 @@ func NewDigitalOcean(log logrus.FieldLogger) Provider {
 		floatingIPActions: make(map[string]*doAction),
 		log:               log.WithField("provider", "digitalocean"),
 	}
+}
+
+// GetProviderName returns an identifier for the provider which can be used in resources.
+func (do *digitalOcean) GetProviderName() string {
+	return DigitalOcean
 }
 
 // IPToProviderID loads the current assignment (as Kubernetes listed in Kubernetes core v1
@@ -253,7 +256,8 @@ func (do *digitalOcean) toRetryError(err error, res *godo.Response) error {
 			return NewRetryError(err, RetryFast)
 		}
 	}
-	if nErr, ok := errors.Unwrap(err).(net.Error); ok {
+	var nErr net.Error
+	if errors.As(err, &nErr) {
 		if nErr.Temporary() {
 			return NewRetryError(err, RetryFast)
 		}

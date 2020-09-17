@@ -25,6 +25,7 @@ spec:
     recordName: hello-world
     zone: example.com
     ttl: 30
+    provider: cloudflare
   match:
     podNamespace: ingress
     podLabel: app=nginx-ingress,component=controller
@@ -40,12 +41,12 @@ apiVersion: flipop.digitalocean.com/v1alpha1
 kind: NodeDNSRecordSet
 metadata:
   name: ingress-nodes
-spec: 
-  provider: digitalocean
+spec:
   dnsRecordSet:
     recordName: nodes
     zone: example.com
-    ttl: 120 
+    ttl: 120
+    provider: digitalocean
   match:
     podNamespace: ingress
     podLabel: app=nginx-ingress,component=controller
@@ -54,6 +55,13 @@ spec:
       - effect: NoSchedule
         key: node.kubernetes.io/unschedulable
 ```
+
+## Providers
+Flipop supports DNS providers and Floating IP providers. FloatingIPPool resources require a Floating IP provider, and can optionally leverage an additional DNS provider. NodeDNSRecordSet providers require a DNS provider.
+| Provider     | IP Provider | DNS Provider | Config                             |
+|--------------|:-----------:|:------------:|------------------------------------|
+| digitalocean |      X      |       X      | env var: DIGITALOCEAN_ACCESS_TOKEN |
+| cloudflare   |             |       X      | env var: CLOUDFLARE_TOKEN          |
 
 ## Installation
 ```
@@ -68,5 +76,3 @@ This operator is concerned with the relationships between FloatingIPPool, Node, 
 
 ## TODO
 - __Grace-periods__ - Moving IPs has a cost. It breaks all active connections, has a momentary period where connections will fail, and risks errors.  In some cases it may be better to give the node a chance to recover.
-- __RBAC__ - Right now this just grants ClusterAdmin which is not great.
-- __Docker Repo__ - Need to create a docker repo.

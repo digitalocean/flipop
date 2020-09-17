@@ -12,7 +12,7 @@ import (
 	"github.com/digitalocean/flipop/pkg/provider/mock_godo"
 	"github.com/golang/mock/gomock"
 
-	"github.com/mmcshane/testify/require"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDigitalOceanEnsureDNSARecordSet(t *testing.T) {

@@ -32,8 +32,9 @@ type newIPFunc func(ctx context.Context, ips []string) error
 type statusUpdateFunc func(ctx context.Context, status flipopv1alpha1.FloatingIPPoolStatus) error
 
 type ipController struct {
-	provider provider.Provider
-	region   string
+	provider    provider.IPProvider
+	dnsProvider provider.DNSProvider
+	region      string
 
 	desiredIPs  int
 	disabledIPs []string
@@ -130,12 +131,13 @@ func (i *ipController) stop() {
 	i.cancel = nil
 }
 
-func (i *ipController) updateProvider(prov provider.Provider, region string) bool {
+func (i *ipController) updateProviders(prov provider.IPProvider, dnsProv provider.DNSProvider, region string) bool {
 	if i.provider != prov || i.region != region {
 		i.stop()
 		i.reset()
 		i.region = region
 		i.provider = prov
+		i.dnsProvider = dnsProv
 		return true
 	}
 	return false
@@ -540,7 +542,7 @@ func (i *ipController) reconcileDNS(ctx context.Context) {
 		return
 	}
 	i.log.WithField("ips", i.ips).Info("updating dns")
-	err := i.provider.EnsureDNSARecordSet(ctx, i.dns.Zone, i.dns.RecordName, i.ips, i.dns.TTL)
+	err := i.dnsProvider.EnsureDNSARecordSet(ctx, i.dns.Zone, i.dns.RecordName, i.ips, i.dns.TTL)
 	if err != nil {
 		i.log.WithError(err).Error("setting DNSRecordSet")
 		return

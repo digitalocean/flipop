@@ -177,6 +177,7 @@ func MakeDNS() flipopv1alpha1.DNSRecordSet {
 		Zone:       "example.com",
 		RecordName: "nodes",
 		TTL:        120,
+		Provider:   "mock",
 	}
 }
 
