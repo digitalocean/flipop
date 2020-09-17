@@ -61,7 +61,7 @@ Flipop supports DNS providers and Floating IP providers. FloatingIPPool resource
 | Provider     | IP Provider | DNS Provider | Config                             |
 |--------------|:-----------:|:------------:|------------------------------------|
 | digitalocean |      X      |       X      | env var: DIGITALOCEAN_ACCESS_TOKEN |
-| cloudflare   |      X      |       X      | env var: CLOUDFLARE_TOKEN          |
+| cloudflare   |             |       X      | env var: CLOUDFLARE_TOKEN          |
 
 ## Installation
 ```

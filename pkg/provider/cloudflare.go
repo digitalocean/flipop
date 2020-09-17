@@ -42,7 +42,7 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 		Type: dnsRecordTypeA,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("fetching existing cloudflare dns records: %w", err)
 	}
 	recordTemplate := cloudflare.DNSRecord{
 		Type: dnsRecordTypeA,
