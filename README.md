@@ -22,8 +22,8 @@ spec:
   - 192.168.1.1
   - 192.168.2.1
   dnsRecordSet:
-    recordName: hello-world
-    zone: example.com
+    recordName: hello-world.example.com
+    zone: abcdefghijklmnopqrstuvwxyz012345
     ttl: 30
     provider: cloudflare
   match:
