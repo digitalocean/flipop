@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +16,8 @@ import (
 	"github.com/digitalocean/flipop/pkg/log"
 	"github.com/digitalocean/flipop/pkg/provider"
 )
+
+var fakeNow = time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC)
 
 func TestIPControllerReconcileDesiredIPs(t *testing.T) {
 	type createIPRes struct {
@@ -75,6 +78,7 @@ func TestIPControllerReconcileDesiredIPs(t *testing.T) {
 					},
 				},
 				log: log.NewTestLogger(t),
+				now: func() time.Time { return fakeNow },
 			}
 			i.reconcileDesiredIPs(ctx)
 			require.ElementsMatch(t, tc.expectPendingIPs, i.pendingIPs)
@@ -218,7 +222,7 @@ func TestIPControllerReconcileIPStatus(t *testing.T) {
 					tc.responses = tc.responses[1:]
 					return providerID, err
 				},
-			}, nil, "")
+			}, nil, "", 0)
 			i.ips = tc.ips
 			if tc.setup != nil {
 				tc.setup(i)
@@ -287,6 +291,40 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 			},
 		},
 		{
+			name:                 "success w/ cool-off",
+			assignableIPs:        []string{"192.168.1.1"},
+			assignableNodes:      []string{"mock://1"},
+			expectProviderIDToIP: map[string]string{"mock://1": "192.168.1.1"},
+			responses:            []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1"}},
+			expectIPRetry:        true, // We always retry, because of assign
+			setup: func(i *ipController) {
+				i.ipToStatus["192.168.1.1"] = &ipStatus{}
+				i.assignmentCoolOff = time.Second
+				i.now = func() time.Time { return fakeNow }
+			},
+			eval: func(i *ipController) {
+				require.Equal(t, provider.RetryFast, i.ipToStatus["192.168.1.1"].retrySchedule)
+				require.NotContains(t, i.providerIDToRetry, "mock://1")
+				assert.Equal(t, fakeNow.Add(time.Second), i.nextAssignment)
+			},
+		},
+		{
+			name:                  "backoff because of cool-off",
+			assignableIPs:         []string{"192.168.1.1"},
+			assignableNodes:       []string{"mock://1"},
+			expectProviderIDToIP:  map[string]string{},
+			expectAssignableIPs:   []string{"192.168.1.1"},
+			expectAssignableNodes: []string{"mock://1"},
+			responses:             []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1"}},
+			expectIPRetry:         true, // We always retry, because of assign
+			setup: func(i *ipController) {
+				i.ipToStatus["192.168.1.1"] = &ipStatus{}
+				i.assignmentCoolOff = time.Second
+				i.nextAssignment = fakeNow.Add(i.assignmentCoolOff)
+				i.now = func() time.Time { return fakeNow }
+			},
+		},
+		{
 			name:                 "assignment error",
 			assignableIPs:        []string{"192.168.1.1"},
 			assignableNodes:      []string{"mock://1"},
@@ -316,7 +354,7 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 					tc.responses = tc.responses[1:]
 					return err
 				},
-			}, nil, "")
+			}, nil, "", 0)
 			for _, ip := range tc.assignableIPs {
 				i.assignableIPs.Add(ip, true)
 			}

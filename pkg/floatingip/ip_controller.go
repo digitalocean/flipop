@@ -36,10 +36,11 @@ type ipController struct {
 	dnsProvider provider.DNSProvider
 	region      string
 
-	desiredIPs  int
-	disabledIPs []string
-	ips         []string
-	pendingIPs  []string
+	assignmentCoolOff time.Duration
+	desiredIPs        int
+	disabledIPs       []string
+	ips               []string
+	pendingIPs        []string
 
 	onNewIPs newIPFunc
 
@@ -55,6 +56,8 @@ type ipController struct {
 	createAttempts      int
 	createNextRetry     time.Time
 	createError         string
+
+	nextAssignment time.Time
 
 	// ipToStatus tracks each IP address, including its current assignment, errors, and retries.
 	ipToStatus map[string]*ipStatus
@@ -75,6 +78,8 @@ type ipController struct {
 
 	dns      *flipopv1alpha1.DNSRecordSet
 	dnsDirty bool
+
+	now func() time.Time
 }
 
 type ipStatus struct {
@@ -97,6 +102,7 @@ func newIPController(log logrus.FieldLogger, onNewIPs newIPFunc, onStatusUpdate 
 		onNewIPs:       onNewIPs,
 		onStatusUpdate: onStatusUpdate,
 		pokeChan:       make(chan struct{}, 1),
+		now:            time.Now,
 	}
 	i.reset()
 	return i
@@ -131,16 +137,30 @@ func (i *ipController) stop() {
 	i.cancel = nil
 }
 
-func (i *ipController) updateProviders(prov provider.IPProvider, dnsProv provider.DNSProvider, region string) bool {
+func (i *ipController) updateProviders(
+	prov provider.IPProvider,
+	dnsProv provider.DNSProvider,
+	region string,
+	assignmentCoolOff time.Duration,
+) bool {
+	var change bool
 	if i.provider != prov || i.region != region {
 		i.stop()
 		i.reset()
 		i.region = region
 		i.provider = prov
 		i.dnsProvider = dnsProv
-		return true
+		change = true
 	}
-	return false
+	if i.assignmentCoolOff != assignmentCoolOff {
+		if !i.nextAssignment.IsZero() {
+			coolOffAdjustment := assignmentCoolOff - i.assignmentCoolOff
+			i.nextAssignment = i.nextAssignment.Add(coolOffAdjustment)
+		}
+		i.assignmentCoolOff = assignmentCoolOff
+		change = true
+	}
+	return change
 }
 
 func (i *ipController) updateIPs(ips []string, desiredIPs int) {
@@ -234,7 +254,7 @@ func (i *ipController) reconcile(ctx context.Context) {
 	i.log.Debug("ipController beginning reconciliation")
 	defer i.log.Debug("ipController finished reconciliation")
 
-	i.nextRetry = time.Now().Add(reconcilePeriod)
+	i.nextRetry = i.now().Add(reconcilePeriod)
 
 	i.reconcileDesiredIPs(ctx)
 	i.reconcilePendingIPs(ctx)
@@ -262,7 +282,7 @@ func (i *ipController) reconcileDesiredIPs(ctx context.Context) {
 	if ctx.Err() != nil {
 		return // short-circuit on context cancel.
 	}
-	if i.createNextRetry.After(time.Now()) {
+	if i.createNextRetry.After(i.now()) {
 		i.retry(i.createNextRetry)
 		return
 	}
@@ -335,7 +355,7 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 			i.ipToStatus[ip] = status
 		}
 
-		if status.nextRetry.After(time.Now()) {
+		if status.nextRetry.After(i.now()) {
 			i.retry(status.nextRetry)
 			continue
 		}
@@ -349,7 +369,7 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 		providerID, err := i.provider.IPToProviderID(ctx, ip)
 		if err != nil {
 			if err == provider.ErrNotFound {
-				// If the IP's not found, try to do the best we can. We'log continue to check its
+				// If the IP is not found, try to do the best we can. We'll continue to check its
 				// status according to the retry schedule. If it recovers, it should be added back.
 				oldProviderID := status.nodeProviderID
 				status.nodeProviderID = ""
@@ -468,13 +488,19 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 		if ctx.Err() != nil {
 			return // short-circuit on context cancel.
 		}
+		now := i.now()
+		if i.assignmentCoolOff != 0 && !now.After(i.nextAssignment) {
+			i.log.Info("assignment cool-off period set; delaying pending assignment")
+			i.retry(i.nextAssignment)
+			return
+		}
 
 		ip := i.assignableIPs.Front()
 
 		// If this IP was previously involved in an error we shouldn't attempt to try again before
 		// its retry timestamp.
 		status := i.ipToStatus[ip]
-		if !status.nextRetry.IsZero() && !status.nextRetry.After(time.Now()) {
+		if !status.nextRetry.IsZero() && !status.nextRetry.After(now) {
 			retryIPs = append(retryIPs, ip)
 			i.retry(status.nextRetry)
 			continue
@@ -485,7 +511,7 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 		// Similarly, if this node was involved in an error we should wait until after its retry
 		// timestamp has elapsed.
 		nRetry, ok := i.providerIDToRetry[providerID]
-		if ok && !nRetry.nextRetry.IsZero() && !nRetry.nextRetry.After(time.Now()) {
+		if ok && !nRetry.nextRetry.IsZero() && !nRetry.nextRetry.After(now) {
 			retryIPs = append(retryIPs, ip)
 			retryProviders = append(retryProviders, providerID)
 			i.retry(nRetry.nextRetry)
@@ -518,6 +544,7 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 			status.attempts = 0
 			delete(i.providerIDToRetry, providerID)
 			_, status.nextRetry = status.retrySchedule.Next(status.attempts)
+			i.nextAssignment = i.now().Add(i.assignmentCoolOff)
 		} else {
 			status.state = flipopv1alpha1.IPStateError
 			status.retrySchedule = provider.ErrorToRetrySchedule(err)

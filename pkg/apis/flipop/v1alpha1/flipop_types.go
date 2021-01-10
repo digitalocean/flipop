@@ -58,6 +58,10 @@ type FloatingIPPoolSpec struct {
 
 	// DNS describes a DNS record which should point to the floating IPs.
 	DNSRecordSet *DNSRecordSet `json:"dnsRecordSet,omitempty"`
+
+	// AssignmentCoolOffSeconds sets a delay between IP assignments. This functionality can be used
+	// to prevent rapid reshuffling and reduces the chances/impact of concurrent assignments.
+	AssignmentCoolOffSeconds float64 `json:"assignmentCoolOffSeconds,omitempty"`
 }
 
 // Match describes a pattern for finding resources the floating-IP should follow.

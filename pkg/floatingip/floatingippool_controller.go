@@ -193,7 +193,8 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 	if k8sPool.Spec.DNSRecordSet != nil && k8sPool.Spec.DNSRecordSet.Provider != "" {
 		dnsProv, _ = c.providers[k8sPool.Spec.DNSRecordSet.Provider].(provider.DNSProvider)
 	}
-	ipChange := pool.ipController.updateProviders(prov, dnsProv, k8sPool.Spec.Region)
+	coolOff := time.Duration(k8sPool.Spec.AssignmentCoolOffSeconds * float64(time.Second))
+	ipChange := pool.ipController.updateProviders(prov, dnsProv, k8sPool.Spec.Region, coolOff)
 	pool.ipController.updateIPs(k8sPool.Spec.IPs, k8sPool.Spec.DesiredIPs)
 	pool.ipController.updateDNSSpec(k8sPool.Spec.DNSRecordSet)
 	if ipChange {

@@ -196,6 +196,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.Match.PodNamespace = ""
 				f.Spec.Match.PodLabel = ""
+				f.Spec.AssignmentCoolOffSeconds = 1.0
 			},
 			expectIPAssignment: map[string]string{
 				// It's non-deterministic if rio-grande or rubicon will get 192.168.1.1, but

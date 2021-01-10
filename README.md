@@ -18,6 +18,7 @@ spec:
   provider: digitalocean
   region: nyc3
   desiredIPs: 3
+  assignmentCoolOffSeconds: 20
   ips:
   - 192.168.1.1
   - 192.168.2.1
