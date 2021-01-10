@@ -13,6 +13,7 @@ spec:
     recordName: hello-world
     zone: example.com
     ttl: 120
+  assignmentCoolOffSeconds: 20
   match:
     podNamespace: ingress
     podLabel: app=nginx-ingress,component=controller

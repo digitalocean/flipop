@@ -66,6 +66,9 @@ spec:
                       type: string
                     ttl:
                       type: integer
+                assignmentCoolOffSeconds:
+                  type: number
+                  minimum: 0
             status:
               type: object
               properties:
