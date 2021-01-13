@@ -77,3 +77,7 @@ This operator is concerned with the relationships between FloatingIPPool, Node, 
 
 ## TODO
 - __Grace-periods__ - Moving IPs has a cost. It breaks all active connections, has a momentary period where connections will fail, and risks errors.  In some cases it may be better to give the node a chance to recover.
+
+## Bugs / PRs / Contributing
+
+At DigitalOcean we value and love our community! If you have any issues or would like to contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
