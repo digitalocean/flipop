@@ -332,7 +332,7 @@ func (i *ipController) reconcilePendingIPs(ctx context.Context) {
 		return
 	}
 	allIPs := make([]string, 0, len(i.ips)+len(i.pendingIPs))
-	copy(allIPs, i.ips)
+	allIPs = append(allIPs, i.ips...)
 	allIPs = append(allIPs, i.pendingIPs...)
 	if i.onNewIPs != nil {
 		log := i.log.WithField("ips", i.pendingIPs)
@@ -567,7 +567,9 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 			status.message = fmt.Sprintf("assigning IP to node: %s", err)
 			log.WithError(err).Error("assigning IP to node")
 			if nRetry == nil {
-				nRetry = &retry{}
+				nRetry = &retry{
+					retrySchedule: provider.RetryFast,
+				}
 			}
 			nRetry.attempts, nRetry.nextRetry = nRetry.retrySchedule.Next(nRetry.attempts)
 			i.providerIDToRetry[providerID] = nRetry
