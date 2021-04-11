@@ -139,7 +139,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 					exec: func(c *Controller) {
 						updatedNodeDNS := nodeDNS.DeepCopy()
 						updatedNodeDNS.Spec.DNSRecordSet.Provider = "unknown"
-						_, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Update(updatedNodeDNS)
+						_, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Update(context.TODO(), updatedNodeDNS, metav1.UpdateOptions{})
 						require.NoError(t, err)
 					},
 				},
@@ -159,7 +159,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				{ // Initial sync is complete, delete a node and watch for update.
 					ips: []string{"10.0.0.1", "10.0.0.3"},
 					exec: func(c *Controller) {
-						err := c.kubeCS.CoreV1().Nodes().Delete("saratoga", &metav1.DeleteOptions{})
+						err := c.kubeCS.CoreV1().Nodes().Delete(context.TODO(), "saratoga", metav1.DeleteOptions{})
 						require.NoError(t, err)
 					},
 				},
@@ -176,9 +176,9 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				{ // Initial sync is complete, add another node to make sure updates work.
 					ips: []string{"10.0.0.1"},
 					exec: func(c *Controller) {
-						_, err := c.kubeCS.CoreV1().Nodes().Create(
+						_, err := c.kubeCS.CoreV1().Nodes().Create(context.TODO(),
 							kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
-								kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")))
+								kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")), metav1.CreateOptions{})
 						require.NoError(t, err)
 					},
 				},
@@ -202,7 +202,8 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 					exec: func(c *Controller) {
 						updatedNodeDNS := nodeDNS.DeepCopy()
 						updatedNodeDNS.Spec.Match.NodeLabel = ""
-						_, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Update(updatedNodeDNS)
+						_, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Update(
+							context.TODO(), updatedNodeDNS, metav1.UpdateOptions{})
 						require.NoError(t, err)
 					},
 				},
@@ -225,7 +226,8 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 						updatedNodeDNS := nodeDNS.DeepCopy()
 						updatedNodeDNS.Spec.DNSRecordSet.RecordName = "ingress"
 						updatedNodeDNS.Spec.DNSRecordSet.Zone = "argolis.cluster"
-						_, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Update(updatedNodeDNS)
+						_, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Update(
+							context.TODO(), updatedNodeDNS, metav1.UpdateOptions{})
 						require.NoError(t, err)
 					},
 				},
@@ -283,7 +285,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 
 			if tc.expectError != "" {
 				// Watch for the error update, so we know when to stop the test.
-				w, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Watch(metav1.ListOptions{Watch: true})
+				w, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Watch(context.TODO(), metav1.ListOptions{Watch: true})
 				require.NoError(t, err)
 				go func() {
 					<-ctx.Done()
@@ -302,7 +304,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 			}
 			c.Run(ctx)
 
-			updatedNodeDNS, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Get(nodeDNS.Name, metav1.GetOptions{})
+			updatedNodeDNS, err := c.flipopCS.FlipopV1alpha1().NodeDNSRecordSets(nodeDNS.Namespace).Get(context.TODO(), nodeDNS.Name, metav1.GetOptions{})
 			require.NoError(t, err)
 			require.NotNil(t, updatedNodeDNS)
 			require.Equal(t, tc.expectError, updatedNodeDNS.Status.Error)

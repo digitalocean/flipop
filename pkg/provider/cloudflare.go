@@ -20,10 +20,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cloudflare/cloudflare-go"
-	"github.com/sirupsen/logrus"
 	"net"
 	"os"
+
+	"github.com/cloudflare/cloudflare-go"
+	"github.com/sirupsen/logrus"
 )
 
 // Cloudflare is the provider identifier used to identify the Cloudflare provider.
@@ -55,7 +56,7 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 	for _, ip := range ips {
 		ipSet[ip] = struct{}{}
 	}
-	existing, err := c.api.DNSRecords(zone, cloudflare.DNSRecord{
+	existing, err := c.api.DNSRecords(ctx, zone, cloudflare.DNSRecord{
 		Name: recordName,
 		Type: dnsRecordTypeA,
 	})
@@ -70,12 +71,12 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 	for _, record := range existing {
 		_, ok := ipSet[record.Content]
 		if ok {
-			if record.TTL != ttl || record.Proxied {
+			if record.TTL != ttl || (record.Proxied != nil && *record.Proxied) {
 				update := recordTemplate
 				update.Content = record.Content
 				update.ID = record.ID
 				log.WithField("record_id", record.ID).Debug("updating record")
-				err := c.api.UpdateDNSRecord(zone, record.ID, update)
+				err := c.api.UpdateDNSRecord(ctx, zone, record.ID, update)
 				if err != nil {
 					return c.toRetryError(fmt.Errorf("updating record: %w", err))
 				}
@@ -92,14 +93,14 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 		update.Content = ip
 		if len(toDelete) > 0 {
 			log.WithFields(logrus.Fields{"record_id": toDelete[0], "ip": ip}).Debug("updating record target")
-			err := c.api.UpdateDNSRecord(zone, toDelete[0], update)
+			err := c.api.UpdateDNSRecord(ctx, zone, toDelete[0], update)
 			if err != nil {
 				return c.toRetryError(fmt.Errorf("updating record: %w", err))
 			}
 			toDelete = toDelete[1:]
 		} else {
 			log.WithField("ip", ip).Debug("creating new record")
-			_, err := c.api.CreateDNSRecord(zone, update)
+			_, err := c.api.CreateDNSRecord(ctx, zone, update)
 			if err != nil {
 				return c.toRetryError(fmt.Errorf("creating record: %w", err))
 			}
@@ -109,7 +110,7 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 	// Clear any unneeded records.
 	for _, id := range toDelete {
 		log.WithField("record_id", id).Debug("deleting unneeded record")
-		err := c.api.DeleteDNSRecord(zone, id)
+		err := c.api.DeleteDNSRecord(ctx, zone, id)
 		if err != nil {
 			return c.toRetryError(fmt.Errorf("deleting record: %w", err))
 		}

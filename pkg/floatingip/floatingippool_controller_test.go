@@ -349,7 +349,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 
 			c.updateOrAdd(k8s)
 			if tc.expectError != "" {
-				updatedK8s, err := c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).Get(k8s.Name, metav1.GetOptions{})
+				updatedK8s, err := c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).Get(ctx, k8s.Name, metav1.GetOptions{})
 				require.NoError(t, err)
 				require.NotNil(t, updatedK8s)
 				require.Equal(t, tc.expectError, updatedK8s.Status.Error)
@@ -360,7 +360,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			require.True(t, ok)
 
 			// Watch for status updates.
-			w, err := c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).Watch(metav1.ListOptions{Watch: true})
+			w, err := c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).Watch(ctx, metav1.ListOptions{Watch: true})
 			require.NoError(t, err)
 			var updatedK8s *flipopv1alpha1.FloatingIPPool
 			go func() {
@@ -390,7 +390,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			// synchronously run through the ipController reconcile loop.
 			f.ipController.reconcile(ctx)
 
-			updatedK8s, err = c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).Get(k8s.Name, metav1.GetOptions{})
+			updatedK8s, err = c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).Get(ctx, k8s.Name, metav1.GetOptions{})
 			require.NoError(t, err)
 			ipState := make(map[flipopv1alpha1.IPState]int)
 			for _, status := range updatedK8s.Status.IPs {

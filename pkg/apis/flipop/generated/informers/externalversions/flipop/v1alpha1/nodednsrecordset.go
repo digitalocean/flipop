@@ -19,6 +19,7 @@
 package v1alpha1
 
 import (
+	"context"
 	time "time"
 
 	versioned "github.com/digitalocean/flipop/pkg/apis/flipop/generated/clientset/versioned"
@@ -61,13 +62,13 @@ func NewFilteredNodeDNSRecordSetInformer(client versioned.Interface, namespace s
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.FlipopV1alpha1().NodeDNSRecordSets(namespace).List(options)
+				return client.FlipopV1alpha1().NodeDNSRecordSets(namespace).List(context.TODO(), options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.FlipopV1alpha1().NodeDNSRecordSets(namespace).Watch(options)
+				return client.FlipopV1alpha1().NodeDNSRecordSets(namespace).Watch(context.TODO(), options)
 			},
 		},
 		&flipopv1alpha1.NodeDNSRecordSet{},
