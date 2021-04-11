@@ -240,7 +240,7 @@ func (c *Controller) updateStatus(k8sPool *flipopv1alpha1.FloatingIPPool, errMsg
 		return
 	}
 	k8sPool.Status = s
-	_, err := c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8sPool.Namespace).UpdateStatus(k8sPool)
+	_, err := c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8sPool.Namespace).UpdateStatus(c.ctx, k8sPool, metav1.UpdateOptions{})
 	if err != nil {
 		c.log.WithError(err).Error("updating FloatingIPPool status")
 	}
@@ -251,7 +251,7 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 		// This GET doesn't seem strictly necessary as the status subresource should update even
 		// if our local resource id is stale. Nevertheless, tests using the fake client fail
 		// without it. Err on the side of caution until we get this resolved.
-		k8s, err := c.flipopCS.FlipopV1alpha1().FloatingIPPools(namespace).Get(name, metav1.GetOptions{})
+		k8s, err := c.flipopCS.FlipopV1alpha1().FloatingIPPools(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			log.WithError(err).Error("loading FloatingIPPool status")
 			return fmt.Errorf("loading FloatingIPPool: %w", err)
@@ -260,7 +260,7 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 			return nil
 		}
 		k8s.Status = status
-		_, err = c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).UpdateStatus(k8s)
+		_, err = c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).UpdateStatus(ctx, k8s, metav1.UpdateOptions{})
 		if err != nil {
 			log.WithError(err).Error("updating FloatingIPPool status")
 			return fmt.Errorf("updating FloatingIPPool status: %w", err)
@@ -271,13 +271,13 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 
 func (c *Controller) ipUpdater(log logrus.FieldLogger, name, namespace string) newIPFunc {
 	return func(ctx context.Context, ips []string) error {
-		k8s, err := c.flipopCS.FlipopV1alpha1().FloatingIPPools(namespace).Get(name, metav1.GetOptions{})
+		k8s, err := c.flipopCS.FlipopV1alpha1().FloatingIPPools(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			c.log.WithError(err).Error("loading FloatingIPPool status")
 			return fmt.Errorf("loading FloatingIPPool: %w", err)
 		}
 		k8s.Spec.IPs = ips
-		_, err = c.flipopCS.FlipopV1alpha1().FloatingIPPools(namespace).Update(k8s)
+		_, err = c.flipopCS.FlipopV1alpha1().FloatingIPPools(namespace).Update(ctx, k8s, metav1.UpdateOptions{})
 		if err != nil {
 			log.WithError(err).Error("updating FloatingIPPool status")
 			return fmt.Errorf("updating FloatingIPPool: %w", err)

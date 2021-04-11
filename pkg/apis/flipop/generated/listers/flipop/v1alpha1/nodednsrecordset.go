@@ -26,8 +26,10 @@ import (
 )
 
 // NodeDNSRecordSetLister helps list NodeDNSRecordSets.
+// All objects returned here must be treated as read-only.
 type NodeDNSRecordSetLister interface {
 	// List lists all NodeDNSRecordSets in the indexer.
+	// Objects returned here must be treated as read-only.
 	List(selector labels.Selector) (ret []*v1alpha1.NodeDNSRecordSet, err error)
 	// NodeDNSRecordSets returns an object that can list and get NodeDNSRecordSets.
 	NodeDNSRecordSets(namespace string) NodeDNSRecordSetNamespaceLister
@@ -58,10 +60,13 @@ func (s *nodeDNSRecordSetLister) NodeDNSRecordSets(namespace string) NodeDNSReco
 }
 
 // NodeDNSRecordSetNamespaceLister helps list and get NodeDNSRecordSets.
+// All objects returned here must be treated as read-only.
 type NodeDNSRecordSetNamespaceLister interface {
 	// List lists all NodeDNSRecordSets in the indexer for a given namespace.
+	// Objects returned here must be treated as read-only.
 	List(selector labels.Selector) (ret []*v1alpha1.NodeDNSRecordSet, err error)
 	// Get retrieves the NodeDNSRecordSet from the indexer for a given namespace and name.
+	// Objects returned here must be treated as read-only.
 	Get(name string) (*v1alpha1.NodeDNSRecordSet, error)
 	NodeDNSRecordSetNamespaceListerExpansion
 }

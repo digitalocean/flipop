@@ -173,7 +173,7 @@ func (c *Controller) validate(log logrus.FieldLogger, nrs *flipopv1alpha1.NodeDN
 		log.Warn("NodeDNSRecordSet referenced unknown provider")
 		status := &flipopv1alpha1.NodeDNSRecordSetStatus{
 			Error: fmt.Sprintf("unknown provider %q", nrs.Spec.DNSRecordSet.Provider)}
-		err := updateStatus(c.flipopCS, nrs.Name, nrs.Namespace, status)
+		err := updateStatus(c.ctx, c.flipopCS, nrs.Name, nrs.Namespace, status)
 		if err != nil {
 			c.log.WithError(err).Error("updating status")
 		}
@@ -184,7 +184,7 @@ func (c *Controller) validate(log logrus.FieldLogger, nrs *flipopv1alpha1.NodeDN
 			Warn("NodeDNSRecordSet referenced provider without dns capability")
 		status := &flipopv1alpha1.NodeDNSRecordSetStatus{
 			Error: fmt.Sprintf("provider %q does not provide DNS", nrs.Spec.DNSRecordSet.Provider)}
-		err := updateStatus(c.flipopCS, nrs.Name, nrs.Namespace, status)
+		err := updateStatus(c.ctx, c.flipopCS, nrs.Name, nrs.Namespace, status)
 		if err != nil {
 			c.log.WithError(err).Error("updating status")
 		}
@@ -194,7 +194,7 @@ func (c *Controller) validate(log logrus.FieldLogger, nrs *flipopv1alpha1.NodeDN
 		nrs.Spec.DNSRecordSet.RecordName == "" {
 		log.Warn("NodeDNSRecordSet had invalid dnsRecordSet specification")
 		status := &flipopv1alpha1.NodeDNSRecordSetStatus{Error: "invalid dnsRecordSet specification"}
-		err := updateStatus(c.flipopCS, nrs.Name, nrs.Namespace, status)
+		err := updateStatus(c.ctx, c.flipopCS, nrs.Name, nrs.Namespace, status)
 		if err != nil {
 			c.log.WithError(err).Error("updating status")
 		}
@@ -204,7 +204,7 @@ func (c *Controller) validate(log logrus.FieldLogger, nrs *flipopv1alpha1.NodeDN
 	if err != nil {
 		log.WithError(err).Warn("NodeDNSRecordSet had invalid match criteria")
 		status := &flipopv1alpha1.NodeDNSRecordSetStatus{Error: "Error " + err.Error()}
-		err = updateStatus(c.flipopCS, nrs.Name, nrs.Namespace, status)
+		err = updateStatus(c.ctx, c.flipopCS, nrs.Name, nrs.Namespace, status)
 		if err != nil {
 			c.log.WithError(err).Error("updating status")
 		}
@@ -350,7 +350,7 @@ func (d *dnsEnablerDisabler) applyDNS() {
 	} else {
 		ll.Info("DNS records updated")
 	}
-	err = updateStatus(d.flipopCS, d.k8s.Name, d.k8s.Namespace, status)
+	err = updateStatus(d.ctx, d.flipopCS, d.k8s.Name, d.k8s.Namespace, status)
 	if err != nil {
 		ll.WithError(err).Error("updating status")
 		return
@@ -377,8 +377,8 @@ func (d *dnsEnablerDisabler) start(ctx context.Context) {
 	d.matchController.Start(ctx)
 }
 
-func updateStatus(cs flipopCS.Interface, name, namespace string, status *flipopv1alpha1.NodeDNSRecordSetStatus) error {
-	k8s, err := cs.FlipopV1alpha1().NodeDNSRecordSets(namespace).Get(name, metav1.GetOptions{})
+func updateStatus(ctx context.Context, cs flipopCS.Interface, name, namespace string, status *flipopv1alpha1.NodeDNSRecordSetStatus) error {
+	k8s, err := cs.FlipopV1alpha1().NodeDNSRecordSets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("loading NodeDNSRecordSet: %w", err)
 	}
@@ -386,7 +386,7 @@ func updateStatus(cs flipopCS.Interface, name, namespace string, status *flipopv
 		return nil
 	}
 	k8s.Status = *status
-	_, err = cs.FlipopV1alpha1().NodeDNSRecordSets(namespace).UpdateStatus(k8s)
+	_, err = cs.FlipopV1alpha1().NodeDNSRecordSets(namespace).UpdateStatus(ctx, k8s, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("updating NodeDNSRecordSet status: %w", err)
 	}

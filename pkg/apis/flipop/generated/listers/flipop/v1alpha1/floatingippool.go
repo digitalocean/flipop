@@ -26,8 +26,10 @@ import (
 )
 
 // FloatingIPPoolLister helps list FloatingIPPools.
+// All objects returned here must be treated as read-only.
 type FloatingIPPoolLister interface {
 	// List lists all FloatingIPPools in the indexer.
+	// Objects returned here must be treated as read-only.
 	List(selector labels.Selector) (ret []*v1alpha1.FloatingIPPool, err error)
 	// FloatingIPPools returns an object that can list and get FloatingIPPools.
 	FloatingIPPools(namespace string) FloatingIPPoolNamespaceLister
@@ -58,10 +60,13 @@ func (s *floatingIPPoolLister) FloatingIPPools(namespace string) FloatingIPPoolN
 }
 
 // FloatingIPPoolNamespaceLister helps list and get FloatingIPPools.
+// All objects returned here must be treated as read-only.
 type FloatingIPPoolNamespaceLister interface {
 	// List lists all FloatingIPPools in the indexer for a given namespace.
+	// Objects returned here must be treated as read-only.
 	List(selector labels.Selector) (ret []*v1alpha1.FloatingIPPool, err error)
 	// Get retrieves the FloatingIPPool from the indexer for a given namespace and name.
+	// Objects returned here must be treated as read-only.
 	Get(name string) (*v1alpha1.FloatingIPPool, error)
 	FloatingIPPoolNamespaceListerExpansion
 }

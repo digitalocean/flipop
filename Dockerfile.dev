@@ -13,4 +13,4 @@ RUN go mod download
 RUN cd /go && \
   (GO111MODULE=off go get k8s.io/code-generator || true) && \
   cd /go/src/k8s.io/code-generator && \
-  git checkout v0.17.3
+  git checkout v0.20.5

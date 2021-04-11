@@ -20,13 +20,14 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"github.com/cloudflare/cloudflare-go"
-	"github.com/digitalocean/flipop/pkg/log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cloudflare/cloudflare-go"
+	"github.com/digitalocean/flipop/pkg/log"
 
 	"github.com/stretchr/testify/require"
 )

@@ -19,6 +19,7 @@
 package v1alpha1
 
 import (
+	"context"
 	"time"
 
 	scheme "github.com/digitalocean/flipop/pkg/apis/flipop/generated/clientset/versioned/scheme"
@@ -37,15 +38,15 @@ type NodeDNSRecordSetsGetter interface {
 
 // NodeDNSRecordSetInterface has methods to work with NodeDNSRecordSet resources.
 type NodeDNSRecordSetInterface interface {
-	Create(*v1alpha1.NodeDNSRecordSet) (*v1alpha1.NodeDNSRecordSet, error)
-	Update(*v1alpha1.NodeDNSRecordSet) (*v1alpha1.NodeDNSRecordSet, error)
-	UpdateStatus(*v1alpha1.NodeDNSRecordSet) (*v1alpha1.NodeDNSRecordSet, error)
-	Delete(name string, options *v1.DeleteOptions) error
-	DeleteCollection(options *v1.DeleteOptions, listOptions v1.ListOptions) error
-	Get(name string, options v1.GetOptions) (*v1alpha1.NodeDNSRecordSet, error)
-	List(opts v1.ListOptions) (*v1alpha1.NodeDNSRecordSetList, error)
-	Watch(opts v1.ListOptions) (watch.Interface, error)
-	Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1alpha1.NodeDNSRecordSet, err error)
+	Create(ctx context.Context, nodeDNSRecordSet *v1alpha1.NodeDNSRecordSet, opts v1.CreateOptions) (*v1alpha1.NodeDNSRecordSet, error)
+	Update(ctx context.Context, nodeDNSRecordSet *v1alpha1.NodeDNSRecordSet, opts v1.UpdateOptions) (*v1alpha1.NodeDNSRecordSet, error)
+	UpdateStatus(ctx context.Context, nodeDNSRecordSet *v1alpha1.NodeDNSRecordSet, opts v1.UpdateOptions) (*v1alpha1.NodeDNSRecordSet, error)
+	Delete(ctx context.Context, name string, opts v1.DeleteOptions) error
+	DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error
+	Get(ctx context.Context, name string, opts v1.GetOptions) (*v1alpha1.NodeDNSRecordSet, error)
+	List(ctx context.Context, opts v1.ListOptions) (*v1alpha1.NodeDNSRecordSetList, error)
+	Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.NodeDNSRecordSet, err error)
 	NodeDNSRecordSetExpansion
 }
 
@@ -64,20 +65,20 @@ func newNodeDNSRecordSets(c *FlipopV1alpha1Client, namespace string) *nodeDNSRec
 }
 
 // Get takes name of the nodeDNSRecordSet, and returns the corresponding nodeDNSRecordSet object, and an error if there is any.
-func (c *nodeDNSRecordSets) Get(name string, options v1.GetOptions) (result *v1alpha1.NodeDNSRecordSet, err error) {
+func (c *nodeDNSRecordSets) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.NodeDNSRecordSet, err error) {
 	result = &v1alpha1.NodeDNSRecordSet{}
 	err = c.client.Get().
 		Namespace(c.ns).
 		Resource("nodednsrecordsets").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
-		Do().
+		Do(ctx).
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of NodeDNSRecordSets that match those selectors.
-func (c *nodeDNSRecordSets) List(opts v1.ListOptions) (result *v1alpha1.NodeDNSRecordSetList, err error) {
+func (c *nodeDNSRecordSets) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha1.NodeDNSRecordSetList, err error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
@@ -88,13 +89,13 @@ func (c *nodeDNSRecordSets) List(opts v1.ListOptions) (result *v1alpha1.NodeDNSR
 		Resource("nodednsrecordsets").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
-		Do().
+		Do(ctx).
 		Into(result)
 	return
 }
 
 // Watch returns a watch.Interface that watches the requested nodeDNSRecordSets.
-func (c *nodeDNSRecordSets) Watch(opts v1.ListOptions) (watch.Interface, error) {
+func (c *nodeDNSRecordSets) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
@@ -105,87 +106,90 @@ func (c *nodeDNSRecordSets) Watch(opts v1.ListOptions) (watch.Interface, error) 
 		Resource("nodednsrecordsets").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
-		Watch()
+		Watch(ctx)
 }
 
 // Create takes the representation of a nodeDNSRecordSet and creates it.  Returns the server's representation of the nodeDNSRecordSet, and an error, if there is any.
-func (c *nodeDNSRecordSets) Create(nodeDNSRecordSet *v1alpha1.NodeDNSRecordSet) (result *v1alpha1.NodeDNSRecordSet, err error) {
+func (c *nodeDNSRecordSets) Create(ctx context.Context, nodeDNSRecordSet *v1alpha1.NodeDNSRecordSet, opts v1.CreateOptions) (result *v1alpha1.NodeDNSRecordSet, err error) {
 	result = &v1alpha1.NodeDNSRecordSet{}
 	err = c.client.Post().
 		Namespace(c.ns).
 		Resource("nodednsrecordsets").
+		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(nodeDNSRecordSet).
-		Do().
+		Do(ctx).
 		Into(result)
 	return
 }
 
 // Update takes the representation of a nodeDNSRecordSet and updates it. Returns the server's representation of the nodeDNSRecordSet, and an error, if there is any.
-func (c *nodeDNSRecordSets) Update(nodeDNSRecordSet *v1alpha1.NodeDNSRecordSet) (result *v1alpha1.NodeDNSRecordSet, err error) {
+func (c *nodeDNSRecordSets) Update(ctx context.Context, nodeDNSRecordSet *v1alpha1.NodeDNSRecordSet, opts v1.UpdateOptions) (result *v1alpha1.NodeDNSRecordSet, err error) {
 	result = &v1alpha1.NodeDNSRecordSet{}
 	err = c.client.Put().
 		Namespace(c.ns).
 		Resource("nodednsrecordsets").
 		Name(nodeDNSRecordSet.Name).
+		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(nodeDNSRecordSet).
-		Do().
+		Do(ctx).
 		Into(result)
 	return
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-
-func (c *nodeDNSRecordSets) UpdateStatus(nodeDNSRecordSet *v1alpha1.NodeDNSRecordSet) (result *v1alpha1.NodeDNSRecordSet, err error) {
+func (c *nodeDNSRecordSets) UpdateStatus(ctx context.Context, nodeDNSRecordSet *v1alpha1.NodeDNSRecordSet, opts v1.UpdateOptions) (result *v1alpha1.NodeDNSRecordSet, err error) {
 	result = &v1alpha1.NodeDNSRecordSet{}
 	err = c.client.Put().
 		Namespace(c.ns).
 		Resource("nodednsrecordsets").
 		Name(nodeDNSRecordSet.Name).
 		SubResource("status").
+		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(nodeDNSRecordSet).
-		Do().
+		Do(ctx).
 		Into(result)
 	return
 }
 
 // Delete takes name of the nodeDNSRecordSet and deletes it. Returns an error if one occurs.
-func (c *nodeDNSRecordSets) Delete(name string, options *v1.DeleteOptions) error {
+func (c *nodeDNSRecordSets) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
 		Namespace(c.ns).
 		Resource("nodednsrecordsets").
 		Name(name).
-		Body(options).
-		Do().
+		Body(&opts).
+		Do(ctx).
 		Error()
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *nodeDNSRecordSets) DeleteCollection(options *v1.DeleteOptions, listOptions v1.ListOptions) error {
+func (c *nodeDNSRecordSets) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
 	var timeout time.Duration
-	if listOptions.TimeoutSeconds != nil {
-		timeout = time.Duration(*listOptions.TimeoutSeconds) * time.Second
+	if listOpts.TimeoutSeconds != nil {
+		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
 		Namespace(c.ns).
 		Resource("nodednsrecordsets").
-		VersionedParams(&listOptions, scheme.ParameterCodec).
+		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
-		Body(options).
-		Do().
+		Body(&opts).
+		Do(ctx).
 		Error()
 }
 
 // Patch applies the patch and returns the patched nodeDNSRecordSet.
-func (c *nodeDNSRecordSets) Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1alpha1.NodeDNSRecordSet, err error) {
+func (c *nodeDNSRecordSets) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.NodeDNSRecordSet, err error) {
 	result = &v1alpha1.NodeDNSRecordSet{}
 	err = c.client.Patch(pt).
 		Namespace(c.ns).
 		Resource("nodednsrecordsets").
-		SubResource(subresources...).
 		Name(name).
+		SubResource(subresources...).
+		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(data).
-		Do().
+		Do(ctx).
 		Into(result)
 	return
 }
