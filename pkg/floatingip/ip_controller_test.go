@@ -341,11 +341,26 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 			},
 		},
 		{
+			name:                 "success - in progress",
+			assignableIPs:        []string{"192.168.1.1"},
+			assignableNodes:      []string{"mock://1"},
+			expectProviderIDToIP: map[string]string{"mock://1": "192.168.1.1"},
+			responses:            []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1", err: provider.ErrInProgress}},
+			expectIPRetry:        true, // We always retry, because of assign
+			setup: func(i *ipController) {
+				i.ipToStatus["192.168.1.1"] = &ipStatus{}
+			},
+			eval: func(i *ipController) {
+				require.Equal(t, provider.RetryFast, i.ipToStatus["192.168.1.1"].retrySchedule)
+				require.NotContains(t, i.providerIDToRetry, "mock://1")
+			},
+		},
+		{
 			name:                 "assignment error",
 			assignableIPs:        []string{"192.168.1.1"},
 			assignableNodes:      []string{"mock://1"},
 			expectProviderIDToIP: map[string]string{"mock://1": "192.168.1.1"},
-			responses:            []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1"}},
+			responses:            []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1", err: errors.New("nope")}},
 			expectIPRetry:        true, // We always retry, because of assign
 			setup: func(i *ipController) {
 				i.ipToStatus["192.168.1.1"] = &ipStatus{}
@@ -389,7 +404,7 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 				require.Equal(t, providerID, status.nodeProviderID)
 			}
 
-			require.Equal(t, tc.expectIPRetry, i.nextRetry != time.Time{})
+			require.Equal(t, tc.expectIPRetry, !i.nextRetry.IsZero())
 			require.Equal(t, len(tc.expectAssignableIPs), i.assignableIPs.Len())
 			for _, ip := range tc.expectAssignableIPs {
 				require.True(t, i.assignableIPs.IsSet(ip))
@@ -494,6 +509,76 @@ func TestIPControllers(t *testing.T) {
 			})
 			require.Equal(t, tc.expectAssignable, i.assignableNodes.IsSet("mock://1"))
 			require.Equal(t, "hello-world", i.providerIDToNodeName["mock://1"])
+		})
+	}
+}
+
+func TestReconcilePendingIPs(t *testing.T) {
+	tcs := []struct {
+		name           string
+		setup          func(i *ipController)
+		expect         func(t *testing.T, i *ipController)
+		expectCallback func(t *testing.T) newIPFunc
+	}{
+		{
+			name: "no ips",
+			expect: func(t *testing.T, i *ipController) {
+				assert.Empty(t, i.pendingIPs)
+				assert.Empty(t, i.ips)
+			},
+		},
+		{
+			name: "all pending",
+			setup: func(i *ipController) {
+				i.pendingIPs = []string{"192.168.1.1", "192.168.1.2"}
+			},
+			expect: func(t *testing.T, i *ipController) {
+				assert.Empty(t, i.pendingIPs)
+				assert.Equal(t, []string{"192.168.1.1", "192.168.1.2"}, i.ips)
+				assert.Equal(t, 2, i.assignableIPs.Len())
+			},
+			expectCallback: func(t *testing.T) newIPFunc {
+				return func(ctx context.Context, ips []string) error {
+					assert.Equal(t, []string{"192.168.1.1", "192.168.1.2"}, ips)
+					return nil
+				}
+			},
+		},
+		{
+			name: "some old some new",
+			setup: func(i *ipController) {
+				i.ips = []string{"192.168.1.1"}
+				i.pendingIPs = []string{"192.168.1.2"}
+				i.assignableIPs.Add("192.168.1.1", true)
+			},
+			expect: func(t *testing.T, i *ipController) {
+				assert.Empty(t, i.pendingIPs)
+				assert.Equal(t, []string{"192.168.1.1", "192.168.1.2"}, i.ips)
+				assert.Equal(t, "192.168.1.2", i.assignableIPs.Front())
+			},
+			expectCallback: func(t *testing.T) newIPFunc {
+				return func(ctx context.Context, ips []string) error {
+					assert.Equal(t, []string{"192.168.1.1", "192.168.1.2"}, ips)
+					return nil
+				}
+			},
+		},
+	}
+	for _, tc := range tcs {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			i := newIPController(log.NewTestLogger(t), func(ctx context.Context, ips []string) error {
+				if tc.expectCallback != nil {
+					return tc.expectCallback(t)(ctx, ips)
+				}
+				t.Error("expected call to onNewIPs")
+				return nil
+			}, nil)
+			if tc.setup != nil {
+				tc.setup(i)
+			}
+			i.reconcilePendingIPs(context.Background())
+			tc.expect(t, i)
 		})
 	}
 }

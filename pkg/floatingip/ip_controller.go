@@ -559,7 +559,6 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 			status.retrySchedule = provider.RetryFast
 			status.attempts = 0
 			delete(i.providerIDToRetry, providerID)
-			_, status.nextRetry = status.retrySchedule.Next(status.attempts)
 			i.nextAssignment = i.now().Add(i.assignmentCoolOff)
 		} else {
 			status.state = flipopv1alpha1.IPStateError
@@ -568,13 +567,14 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 			log.WithError(err).Error("assigning IP to node")
 			if nRetry == nil {
 				nRetry = &retry{
-					retrySchedule: provider.RetryFast,
+					retrySchedule: status.retrySchedule,
 				}
 			}
 			nRetry.attempts, nRetry.nextRetry = nRetry.retrySchedule.Next(nRetry.attempts)
 			i.providerIDToRetry[providerID] = nRetry
 			i.retry(nRetry.nextRetry)
 		}
+		_, status.nextRetry = status.retrySchedule.Next(status.attempts)
 		i.retry(status.nextRetry)
 		if originalState != status.state || originalMessage != status.message {
 			i.updateStatus = true
