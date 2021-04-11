@@ -332,7 +332,7 @@ func (i *ipController) reconcilePendingIPs(ctx context.Context) {
 		return
 	}
 	allIPs := make([]string, 0, len(i.ips)+len(i.pendingIPs))
-	copy(allIPs, i.ips)
+	allIPs = append(allIPs, i.ips...)
 	allIPs = append(allIPs, i.pendingIPs...)
 	if i.onNewIPs != nil {
 		log := i.log.WithField("ips", i.pendingIPs)
@@ -559,7 +559,6 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 			status.retrySchedule = provider.RetryFast
 			status.attempts = 0
 			delete(i.providerIDToRetry, providerID)
-			_, status.nextRetry = status.retrySchedule.Next(status.attempts)
 			i.nextAssignment = i.now().Add(i.assignmentCoolOff)
 		} else {
 			status.state = flipopv1alpha1.IPStateError
@@ -567,12 +566,15 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 			status.message = fmt.Sprintf("assigning IP to node: %s", err)
 			log.WithError(err).Error("assigning IP to node")
 			if nRetry == nil {
-				nRetry = &retry{}
+				nRetry = &retry{
+					retrySchedule: status.retrySchedule,
+				}
 			}
 			nRetry.attempts, nRetry.nextRetry = nRetry.retrySchedule.Next(nRetry.attempts)
 			i.providerIDToRetry[providerID] = nRetry
 			i.retry(nRetry.nextRetry)
 		}
+		_, status.nextRetry = status.retrySchedule.Next(status.attempts)
 		i.retry(status.nextRetry)
 		if originalState != status.state || originalMessage != status.message {
 			i.updateStatus = true
