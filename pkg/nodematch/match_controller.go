@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -236,11 +237,13 @@ func (m *Controller) run() {
 	// apply these changes as a single update, and hopefully avoid disabling or moving nodes
 	// which are active but not yet seen.
 	var enable []*corev1.Node
+
 	for _, n := range m.nodeNameToNode {
 		if n.enabled {
 			enable = append(enable, n.k8sNode)
 		}
 	}
+	sort.Sort(byNodeName(enable)) // make this list reproducable
 	m.action.EnableNodes(enable...)
 	m.primed = true
 }
@@ -519,3 +522,9 @@ func ValidateMatch(match *flipopv1alpha1.Match) error {
 	}
 	return nil
 }
+
+type byNodeName []*corev1.Node
+
+func (a byNodeName) Len() int           { return len(a) }
+func (a byNodeName) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a byNodeName) Less(i, j int) bool { return a[i].GetName() < a[j].GetName() }

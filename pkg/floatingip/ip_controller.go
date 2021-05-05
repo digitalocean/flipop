@@ -100,9 +100,11 @@ type ipController struct {
 
 type ipStatus struct {
 	retry
-	message        string
-	nodeProviderID string
-	state          flipopv1alpha1.IPState
+	message          string
+	nodeProviderID   string
+	state            flipopv1alpha1.IPState
+	assignments      uint
+	assignmentErrors uint
 }
 
 type retry struct {
@@ -231,7 +233,6 @@ func (i *ipController) updateIPs(ips []string, desiredIPs int) {
 	i.desiredIPs = desiredIPs
 	i.poke()
 	i.log.Info("ip configuration updated")
-	return
 }
 
 // Run will start reconciliation of floating IPs until the context is canceled.
@@ -560,10 +561,12 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 			status.attempts = 0
 			delete(i.providerIDToRetry, providerID)
 			i.nextAssignment = i.now().Add(i.assignmentCoolOff)
+			status.assignments++
 		} else {
 			status.state = flipopv1alpha1.IPStateError
 			status.retrySchedule = provider.ErrorToRetrySchedule(err)
 			status.message = fmt.Sprintf("assigning IP to node: %s", err)
+			status.assignmentErrors++
 			log.WithError(err).Error("assigning IP to node")
 			if nRetry == nil {
 				nRetry = &retry{

@@ -24,8 +24,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/digitalocean/flipop/pkg/metacontext"
 	"github.com/digitalocean/flipop/pkg/nodematch"
 	"github.com/digitalocean/flipop/pkg/provider"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 
 	"k8s.io/client-go/kubernetes"
@@ -48,25 +50,28 @@ type Controller struct {
 	kubeCS   kubernetes.Interface
 	flipopCS flipopCS.Interface
 
-	providers map[string]provider.BaseProvider
+	providers *provider.Registry
 
 	children map[string]*dnsEnablerDisabler
 	lock     sync.Mutex
 
 	log logrus.FieldLogger
 	ctx context.Context
+
+	metricRecords *prometheus.GaugeVec
 }
 
 // NewController creates a new Controller.
 func NewController(
 	kubeConfig clientcmd.ClientConfig,
-	providers map[string]provider.BaseProvider,
+	providers *provider.Registry,
 	log logrus.FieldLogger,
 ) (*Controller, error) {
 	c := &Controller{
-		providers: providers,
-		children:  make(map[string]*dnsEnablerDisabler),
-		log:       log,
+		providers:     providers,
+		children:      make(map[string]*dnsEnablerDisabler),
+		log:           log,
+		metricRecords: prometheus.NewGaugeVec(recordsOpts, recordsLabels),
 	}
 	var err error
 	clientConfig, err := kubeConfig.ClientConfig()
@@ -137,6 +142,7 @@ func (c *Controller) OnDelete(obj interface{}) {
 	c.log.WithField("node_dns_resource",
 		fmt.Sprintf("%s/%s", nrs.Namespace, nrs.Name)).Info("node dns resource deleted")
 	nodeDNS.stop()
+	c.metricRecords.Delete(nodeDNS.metricLabels())
 	delete(c.children, nrs.GetSelfLink())
 }
 
@@ -147,12 +153,13 @@ func (c *Controller) updateOrAdd(nrs *flipopv1alpha1.NodeDNSRecordSet) {
 		fmt.Sprintf("%s/%s", nrs.Namespace, nrs.Name))
 	isValid := c.validate(log, nrs)
 
+	ctx := metacontext.WithKubeObject(c.ctx, nrs)
 	nodeDNS, known := c.children[nrs.GetSelfLink()]
 	if !known {
 		if !isValid {
 			return // c.validate logs & updates the NodeDNSRecordSet's status to indicate the error.
 		}
-		nodeDNS = newDNSEnablerDisabler(c.ctx, c.log, c.kubeCS, c.flipopCS)
+		nodeDNS = newDNSEnablerDisabler(ctx, c.log, c.kubeCS, c.flipopCS)
 		log.Info("NodeDNSRecordSet added; beginning reconciliation")
 		c.children[nrs.GetSelfLink()] = nodeDNS
 	}
@@ -163,13 +170,13 @@ func (c *Controller) updateOrAdd(nrs *flipopv1alpha1.NodeDNSRecordSet) {
 		return
 	}
 
-	nodeDNS.update(nrs, c.providers)
-	nodeDNS.start(c.ctx)
+	nodeDNS.update(nrs, c.providers, c.metricRecords)
+	nodeDNS.start(ctx)
 }
 
 func (c *Controller) validate(log logrus.FieldLogger, nrs *flipopv1alpha1.NodeDNSRecordSet) bool {
-	prov, ok := c.providers[nrs.Spec.DNSRecordSet.Provider]
-	if !ok {
+	prov := c.providers.Get(nrs.Spec.DNSRecordSet.Provider)
+	if prov == nil {
 		log.Warn("NodeDNSRecordSet referenced unknown provider")
 		status := &flipopv1alpha1.NodeDNSRecordSetStatus{
 			Error: fmt.Sprintf("unknown provider %q", nrs.Spec.DNSRecordSet.Provider)}
@@ -227,6 +234,7 @@ type dnsEnablerDisabler struct {
 	matchController *nodematch.Controller
 	retryTimer      *time.Timer
 	retries         int
+	metricRecords   prometheus.Gauge
 }
 
 func newDNSEnablerDisabler(
@@ -245,19 +253,22 @@ func newDNSEnablerDisabler(
 	return d
 }
 
-func (d *dnsEnablerDisabler) update(k8s *flipopv1alpha1.NodeDNSRecordSet, provs map[string]provider.BaseProvider) {
+func (d *dnsEnablerDisabler) update(k8s *flipopv1alpha1.NodeDNSRecordSet, provs *provider.Registry, metricRecords *prometheus.GaugeVec) {
 	d.lock.Lock()
 	defer d.lock.Unlock()
+	if d.k8s != nil {
+		metricRecords.Delete(d.metricLabels())
+	}
 	if d.matchController != nil &&
 		(!d.matchController.IsCriteriaEqual(&k8s.Spec.Match) ||
-			d.provider != provs[k8s.Spec.DNSRecordSet.Provider] ||
+			d.provider != provs.Get(k8s.Spec.DNSRecordSet.Provider) ||
 			!reflect.DeepEqual(d.k8s.Spec.DNSRecordSet, k8s.Spec.DNSRecordSet)) {
 		d.log.Info("NodeDNSRecordSet updated; restarting controller.")
 		d.matchController.Stop()
 		d.matchController = nil
 		d.activeNodes = make(map[string]*corev1.Node)
 	}
-	d.provider = provs[k8s.Spec.DNSRecordSet.Provider].(provider.DNSProvider)
+	d.provider = provs.Get(k8s.Spec.DNSRecordSet.Provider).(provider.DNSProvider)
 	if d.matchController == nil {
 		d.matchController = nodematch.NewController(d.log, d.kubeCS, d)
 		d.matchController.SetCriteria(&k8s.Spec.Match)
@@ -266,6 +277,17 @@ func (d *dnsEnablerDisabler) update(k8s *flipopv1alpha1.NodeDNSRecordSet, provs 
 		}
 	}
 	d.k8s = k8s.DeepCopy()
+	d.metricRecords = metricRecords.With(d.metricLabels())
+}
+
+func (d *dnsEnablerDisabler) metricLabels() prometheus.Labels {
+	return prometheus.Labels{
+		"namespace": d.k8s.GetNamespace(),
+		"name":      d.k8s.GetName(),
+		"provider":  d.provider.GetProviderName(),
+		"dns": d.provider.RecordNameAndZoneToFQDN(
+			d.k8s.Spec.DNSRecordSet.Zone, d.k8s.Spec.DNSRecordSet.RecordName),
+	}
 }
 
 func (d *dnsEnablerDisabler) EnableNodes(nodes ...*corev1.Node) {
@@ -355,8 +377,8 @@ func (d *dnsEnablerDisabler) applyDNS() {
 		ll.WithError(err).Error("updating status")
 		return
 	}
+	d.metricRecords.Set(float64(len(ips)))
 	d.retries = 0
-	return
 }
 
 func (d *dnsEnablerDisabler) stop() {

@@ -23,8 +23,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/digitalocean/flipop/pkg/metacontext"
 	"github.com/digitalocean/flipop/pkg/nodematch"
 	"github.com/digitalocean/flipop/pkg/provider"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -46,7 +48,7 @@ type Controller struct {
 	kubeCS   kubernetes.Interface
 	flipopCS flipopCS.Interface
 
-	providers map[string]provider.BaseProvider
+	providers *provider.Registry
 
 	pools    map[string]floatingIPPool
 	poolLock sync.Mutex
@@ -56,12 +58,19 @@ type Controller struct {
 }
 
 type floatingIPPool struct {
+	namespace       string
+	name            string
 	matchController *nodematch.Controller
 	ipController    *ipController
 }
 
 // NewController creates a new Controller.
-func NewController(kubeConfig clientcmd.ClientConfig, providers map[string]provider.BaseProvider, log logrus.FieldLogger) (*Controller, error) {
+func NewController(
+	kubeConfig clientcmd.ClientConfig,
+	providers *provider.Registry,
+	log logrus.FieldLogger,
+	promRegistry *prometheus.Registry,
+) (*Controller, error) {
 	c := &Controller{
 		providers: providers,
 		pools:     make(map[string]floatingIPPool),
@@ -155,6 +164,7 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 		pool.ipController.stop()
 		delete(c.pools, k8sPool.GetSelfLink())
 	}
+	ctx := metacontext.WithKubeObject(c.ctx, k8sPool)
 	if !isKnownPool {
 		if !isValid {
 			return // c.validate logs & updates the FloatingIPPool's status to indicate the error.
@@ -163,11 +173,13 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 			c.ipUpdater(log, k8sPool.Name, k8sPool.Namespace),
 			c.statusUpdater(log, k8sPool.Name, k8sPool.Namespace))
 		pool = floatingIPPool{
+			namespace:       k8sPool.Namespace,
+			name:            k8sPool.Name,
 			matchController: nodematch.NewController(log, c.kubeCS, ipc),
 			ipController:    ipc,
 		}
 		pool.matchController.SetCriteria(&k8sPool.Spec.Match)
-		pool.matchController.Start(c.ctx)
+		pool.matchController.Start(ctx)
 		log.Info("FloatingIPPool added; beginning reconciliation")
 		c.pools[k8sPool.GetSelfLink()] = pool
 	}
@@ -179,23 +191,23 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 		return
 	}
 
-	prov := c.providers[k8sPool.Spec.Provider].(provider.IPProvider)
+	prov := c.providers.Get(k8sPool.Spec.Provider).(provider.IPProvider)
 	dnsProv, _ := prov.(provider.DNSProvider)
 	if k8sPool.Spec.DNSRecordSet != nil && k8sPool.Spec.DNSRecordSet.Provider != "" {
-		dnsProv, _ = c.providers[k8sPool.Spec.DNSRecordSet.Provider].(provider.DNSProvider)
+		dnsProv, _ = c.providers.Get(k8sPool.Spec.DNSRecordSet.Provider).(provider.DNSProvider)
 	}
 	coolOff := time.Duration(k8sPool.Spec.AssignmentCoolOffSeconds * float64(time.Second))
 	ipChange := pool.ipController.updateProviders(prov, dnsProv, k8sPool.Spec.Region, coolOff)
 	pool.ipController.updateIPs(k8sPool.Spec.IPs, k8sPool.Spec.DesiredIPs)
 	pool.ipController.updateDNSSpec(k8sPool.Spec.DNSRecordSet)
 	if ipChange {
-		pool.ipController.start(c.ctx)
+		pool.ipController.start(ctx)
 	}
 }
 
 func (c *Controller) validate(log logrus.FieldLogger, k8sPool *flipopv1alpha1.FloatingIPPool) bool {
-	prov, ok := c.providers[k8sPool.Spec.Provider]
-	if !ok {
+	prov := c.providers.Get(k8sPool.Spec.Provider)
+	if prov == nil {
 		c.updateStatus(k8sPool, fmt.Sprintf("unknown provider %q", k8sPool.Spec.Provider))
 		log.Warn("FloatingIPPool referenced unknown provider")
 		return false
@@ -218,8 +230,8 @@ func (c *Controller) validate(log logrus.FieldLogger, k8sPool *flipopv1alpha1.Fl
 		return false
 	}
 	if k8sPool.Spec.DNSRecordSet != nil {
-		dnsProv, ok := c.providers[k8sPool.Spec.DNSRecordSet.Provider]
-		if !ok {
+		dnsProv := c.providers.Get(k8sPool.Spec.DNSRecordSet.Provider)
+		if dnsProv == nil {
 			dnsProv = prov
 		}
 		if _, ok := dnsProv.(provider.DNSProvider); !ok {
