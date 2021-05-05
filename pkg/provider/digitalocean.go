@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/digitalocean/flipop/pkg/metacontext"
 	"github.com/digitalocean/godo"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/oauth2"
@@ -57,6 +58,26 @@ type digitalOcean struct {
 	lock              sync.Mutex
 	floatingIPActions map[string]*doAction
 	log               logrus.FieldLogger
+
+	token string
+
+	metrics *metrics
+}
+
+// DigitalOceanOption defines a create option for the DigitalOcean provider.
+type DigitalOceanOption func(d *digitalOcean)
+
+// DigitalOceanWithLog sets a logrus.FieldLogger on the DigitalOcean provider.
+func DigitalOceanWithLog(ll logrus.FieldLogger) DigitalOceanOption {
+	return func(d *digitalOcean) {
+		d.log = ll.WithField("provider", DigitalOcean)
+	}
+}
+
+func digitalOceanWithMetrics(m *metrics) DigitalOceanOption {
+	return func(c *digitalOcean) {
+		m.withProvider(DigitalOcean)
+	}
 }
 
 type doTokenSource struct {
@@ -70,26 +91,40 @@ func (t *doTokenSource) Token() (*oauth2.Token, error) {
 	return token, nil
 }
 
+// RegisterDigitalOcean creates the DigitalOcean provider and registers it in the registry.
+func (r *Registry) RegisterDigitalOcean(opts ...DigitalOceanOption) error {
+	opts = append([]DigitalOceanOption{
+		DigitalOceanWithLog(r.log),
+		digitalOceanWithMetrics(r.metrics),
+	}, opts...)
+	do, err := NewDigitalOcean(opts...)
+	if err != nil {
+		return err
+	}
+	r.providers[do.GetProviderName()] = do
+	return nil
+}
+
 // NewDigitalOcean returns a new provider for DigitalOcean.
-func NewDigitalOcean(log logrus.FieldLogger) BaseProvider {
-	token := os.Getenv("DIGITALOCEAN_ACCESS_TOKEN")
-	if token == "" {
-		return nil
+func NewDigitalOcean(opts ...DigitalOceanOption) (BaseProvider, error) {
+	do := &digitalOcean{
+		floatingIPActions: make(map[string]*doAction),
+		token:             os.Getenv("DIGITALOCEAN_ACCESS_TOKEN"),
+	}
+	if do.token == "" {
+		return nil, errNoCredentials
 	}
 	tokenSource := &doTokenSource{
-		AccessToken: token,
+		AccessToken: do.token,
 	}
 
 	oauthClient := oauth2.NewClient(context.Background(), tokenSource)
 	client := godo.NewClient(oauthClient)
-	return &digitalOcean{
-		domainsService:    client.Domains,
-		ipsService:        client.FloatingIPs,
-		ipActionsService:  client.FloatingIPActions,
-		dropletsService:   client.Droplets,
-		floatingIPActions: make(map[string]*doAction),
-		log:               log.WithField("provider", "digitalocean"),
-	}
+	do.domainsService = client.Domains
+	do.ipsService = client.FloatingIPs
+	do.ipActionsService = client.FloatingIPActions
+	do.dropletsService = client.Droplets
+	return do, nil
 }
 
 // GetProviderName returns an identifier for the provider which can be used in resources.
@@ -99,8 +134,10 @@ func (do *digitalOcean) GetProviderName() string {
 
 // IPToProviderID loads the current assignment (as Kubernetes listed in Kubernetes core v1
 // NodeSpec.ProviderID for a floating IP.
-func (do *digitalOcean) IPToProviderID(ctx context.Context, ip string) (string, error) {
-	err := do.asyncStatus(ctx, ip)
+func (do *digitalOcean) IPToProviderID(ctx context.Context, ip string) (_ string, err error) {
+	done := do.metrics.startCall(ctx)
+	defer done(&err)
+	err = do.asyncStatus(ctx, ip)
 	if err != nil {
 		return "", err
 	}
@@ -118,9 +155,12 @@ func (do *digitalOcean) IPToProviderID(ctx context.Context, ip string) (string, 
 }
 
 // AssignIP assigns a floating IP to the specified node.
-func (do *digitalOcean) AssignIP(ctx context.Context, ip, providerID string) error {
-	log := do.log.WithFields(logrus.Fields{"ip": ip, "provider_id": providerID})
-	err := do.asyncStatus(ctx, ip)
+func (do *digitalOcean) AssignIP(ctx context.Context, ip, providerID string) (err error) {
+	done := do.metrics.startCall(ctx)
+	defer done(&err)
+	var log logrus.FieldLogger = do.log.WithFields(logrus.Fields{"ip": ip, "provider_id": providerID})
+	log = metacontext.AddKubeMetadataToLogger(ctx, log)
+	err = do.asyncStatus(ctx, ip)
 	if err != nil {
 		log.WithError(err).Debug("checking in-progress status for assign IP")
 		return err
@@ -166,12 +206,14 @@ func (do *digitalOcean) AssignIP(ctx context.Context, ip, providerID string) err
 		actionID: action.ID,
 		expires:  time.Now().Add(doActionExpiration),
 	}
-	do.log.WithFields(logrus.Fields{"ip": ip, "action_id": action.ID}).Debug("floating IP assignment initiated")
+	log.WithFields(logrus.Fields{"ip": ip, "action_id": action.ID}).Debug("floating IP assignment initiated")
 	return ErrInProgress
 }
 
 // CreateIP creates a new floating IP.
-func (do *digitalOcean) CreateIP(ctx context.Context, region string) (string, error) {
+func (do *digitalOcean) CreateIP(ctx context.Context, region string) (_ string, err error) {
+	done := do.metrics.startCall(ctx)
+	defer done(&err)
 	flip, _, err := do.ipsService.Create(ctx, &godo.FloatingIPCreateRequest{
 		Region: region,
 	})
@@ -182,7 +224,9 @@ func (do *digitalOcean) CreateIP(ctx context.Context, region string) (string, er
 }
 
 // NodeToIP attempts to find any floating IPs bound to the specified node.
-func (do *digitalOcean) NodeToIP(ctx context.Context, providerID string) (string, error) {
+func (do *digitalOcean) NodeToIP(ctx context.Context, providerID string) (_ string, err error) {
+	done := do.metrics.startCall(ctx)
+	defer done(&err)
 	dropletID, err := strconv.ParseInt(strings.TrimPrefix(providerID, "digitalocean://"), 10, 0)
 	if err != nil {
 		return "", fmt.Errorf("parsing provider id: %w", err)
@@ -245,7 +289,8 @@ func (do *digitalOcean) asyncStatus(ctx context.Context, ip string) error {
 	if a == nil {
 		return nil
 	}
-	log := do.log.WithFields(logrus.Fields{"ip": ip, "action_id": a.actionID})
+	var log logrus.FieldLogger = do.log.WithFields(logrus.Fields{"ip": ip, "action_id": a.actionID})
+	log = metacontext.AddKubeMetadataToLogger(ctx, log)
 	action, _, err := do.ipActionsService.Get(ctx, ip, a.actionID)
 	if err != nil {
 		log.WithError(err).Error("retrieving action status")
@@ -283,9 +328,12 @@ func (do *digitalOcean) toRetryError(err error, res *godo.Response) error {
 
 // EnsureDNSARecordSet ensures that the record set w/ name `recordName` contains all IPs listed in `ips`
 // and no others.
-func (do *digitalOcean) EnsureDNSARecordSet(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
+func (do *digitalOcean) EnsureDNSARecordSet(ctx context.Context, zone, recordName string, ips []string, ttl int) (err error) {
+	done := do.metrics.startCall(ctx)
+	defer done(&err)
 	// First we need to know what records exist.
-	log := do.log.WithFields(logrus.Fields{"zone": zone, "record_name": recordName})
+	var log logrus.FieldLogger = do.log.WithFields(logrus.Fields{"zone": zone, "record_name": recordName})
+	log = metacontext.AddKubeMetadataToLogger(ctx, log)
 	ipSet := make(map[string]struct{})
 	for _, ip := range ips {
 		ipSet[ip] = struct{}{}
@@ -368,4 +416,9 @@ func (do *digitalOcean) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 	}
 	log.Debug("completed updating a record")
 	return nil
+}
+
+// RecordNameAndZoneToFQDN translates a zone+recordName into a fully-qualified domain name.
+func (do *digitalOcean) RecordNameAndZoneToFQDN(zone, recordName string) string {
+	return recordName + "." + zone
 }

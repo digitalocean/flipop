@@ -17,11 +17,18 @@
 package floatingip
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -51,6 +58,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 		expectIPState         map[flipopv1alpha1.IPState]int
 		expectIPAssignment    map[string]string // expect a specific node to have a specific ip
 		expectSetDNSCalls     int
+		expectMetrics         string
 	}{
 		{
 			name: "happy path",
@@ -70,6 +78,14 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			},
 			expectAssignIPCalls: 1,
 			expectSetDNSCalls:   1,
+			expectMetrics: `flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock"} 1
+flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock"} 0
+flipop_floatingippoolcontroller_ip_node{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",node="rio-grande",provider="mock",provider_id="mock://1"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock",state="active"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock",state="unassigned"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="assigned"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="available"} 0
+`,
 		},
 		{
 			name: "happy path with other DNS provider",
@@ -88,9 +104,17 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			expectSetDNSCalls:   1,
 			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.DNSRecordSet.Provider = "other"
-				c.providers["other"] = c.providers[provider.Mock].(*provider.MockProvider).MockDNSProvider
-				c.providers[provider.Mock] = c.providers[provider.Mock].(*provider.MockProvider).MockIPProvider
+				c.providers.Register("other", c.providers.Get(provider.Mock).(*provider.MockProvider).MockDNSProvider)
+				c.providers.Register(provider.Mock, c.providers.Get(provider.Mock).(*provider.MockProvider).MockIPProvider)
 			},
+			expectMetrics: `flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock"} 1
+flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock"} 0
+flipop_floatingippoolcontroller_ip_node{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",node="rio-grande",provider="mock",provider_id="mock://1"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock",state="active"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock",state="unassigned"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="assigned"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="available"} 0
+`,
 		},
 		{
 			name: "create new ips",
@@ -110,6 +134,14 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			},
 			expectAssignIPCalls: 1,
 			expectSetDNSCalls:   1,
+			expectMetrics: `flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="10.0.1.1",name="deep-space-nine",namespace="",provider="mock"} 0
+flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="10.0.2.2",name="deep-space-nine",namespace="",provider="mock"} 1
+flipop_floatingippoolcontroller_ip_node{dns="deep-space-nine.example.com",ip="10.0.2.2",name="deep-space-nine",namespace="",node="rio-grande",provider="mock",provider_id="mock://1"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="10.0.1.1",name="deep-space-nine",namespace="",provider="mock",state="unassigned"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="10.0.2.2",name="deep-space-nine",namespace="",provider="mock",state="active"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="assigned"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="available"} 0
+`,
 		},
 		{
 			name: "already has ip",
@@ -135,6 +167,12 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			},
 			expectAssignIPCalls: 0,
 			expectSetDNSCalls:   1,
+			expectMetrics: `flipop_floatingippoolcontroller_ip_node{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",node="rio-grande",provider="mock",provider_id="mock://1"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock",state="active"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock",state="unassigned"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="assigned"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="available"} 0
+`,
 		},
 		{
 			name: "no node selector",
@@ -154,6 +192,15 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			},
 			expectAssignIPCalls: 2,
 			expectSetDNSCalls:   1,
+			expectMetrics: `flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock"} 1
+flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock"} 1
+flipop_floatingippoolcontroller_ip_node{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",node="ganges",provider="mock",provider_id="mock://2"} 1
+flipop_floatingippoolcontroller_ip_node{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",node="rio-grande",provider="mock",provider_id="mock://1"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock",state="active"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock",state="active"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="assigned"} 2
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="available"} 0
+`,
 		},
 		{
 			name: "bad pod matches",
@@ -175,6 +222,9 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				flipopv1alpha1.IPStateUnassigned: 2,
 			},
 			expectSetDNSCalls: 1,
+			expectMetrics: `flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock",state="unassigned"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock",state="unassigned"} 1
+`,
 		},
 		{
 			name: "no pod constraints",
@@ -194,6 +244,14 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			},
 			expectAssignIPCalls: 1,
 			expectSetDNSCalls:   1,
+			expectMetrics: `flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock"} 1
+flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock"} 0
+flipop_floatingippoolcontroller_ip_node{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",node="rio-grande",provider="mock",provider_id="mock://1"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock",state="active"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock",state="unassigned"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="assigned"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="available"} 0
+`,
 		},
 		{
 			name: "IP needs to be reassigned",
@@ -215,8 +273,8 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				f.Spec.AssignmentCoolOffSeconds = 1.0
 			},
 			expectIPAssignment: map[string]string{
-				// It's non-deterministic if rio-grande or rubicon will get 192.168.1.1, but
-				// 172.16.2.2 should stay w/ shenandoah.
+				// rio-grande will get 192.168.1.1 because if all else is equal, nodematch adds
+				// matching nodes sorted by name. 172.16.2.2 should stay w/ shenandoah.
 				"172.16.2.2": "mock://5",
 			},
 			expectAssignableNodes: 1, // We have 3 matching nodes, but only 2 ips, one has to wait.
@@ -225,6 +283,15 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			},
 			expectAssignIPCalls: 1,
 			expectSetDNSCalls:   1,
+			expectMetrics: `flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock"} 0
+flipop_floatingippoolcontroller_ip_assignments{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock"} 1
+flipop_floatingippoolcontroller_ip_node{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",node="shenandoah",provider="mock",provider_id="mock://5"} 1
+flipop_floatingippoolcontroller_ip_node{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",node="rio-grande",provider="mock",provider_id="mock://1"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock",state="active"} 1
+flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock",state="active"} 1
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="assigned"} 2
+flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",name="deep-space-nine",namespace="",provider="mock",status="available"} 1
+`,
 		},
 		{
 			name: "invalid pod selector",
@@ -270,7 +337,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			objs: []metav1.Object{},
 			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.DNSRecordSet.Provider = ""
-				c.providers[provider.Mock] = c.providers[provider.Mock].(*provider.MockProvider).MockIPProvider
+				c.providers.Register(provider.Mock, c.providers.Get(provider.Mock).(*provider.MockProvider).MockIPProvider)
 			},
 			expectError: "FloatingIPPool dns referenced provider without dns capability",
 		},
@@ -278,7 +345,7 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 			name: "main provider does not support ip",
 			objs: []metav1.Object{},
 			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
-				c.providers[provider.Mock] = c.providers[provider.Mock].(*provider.MockProvider).MockDNSProvider
+				c.providers.Register(provider.Mock, c.providers.Get(provider.Mock).(*provider.MockProvider).MockDNSProvider)
 			},
 			expectError: "provider \"mock\" does not provide floating IPs",
 		},
@@ -304,40 +371,42 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				flipopCS: flipCSFake.NewSimpleClientset(k8s),
 				// Use assert because provider actions run in a goroutine and testify will miss the
 				// panic from require.
-				providers: map[string]provider.BaseProvider{
-					"mock": &provider.MockProvider{
-						MockIPProvider: &provider.MockIPProvider{
-							IPToProviderIDFunc: func(ctx context.Context, ip string) (string, error) {
-								return ipAssignment[ip], nil
-							},
-							AssignIPFunc: func(ctx context.Context, ip, providerID string) error {
-								assignIPCalls++
-								ipAssignment[ip] = providerID
-								return nil
-							},
-							CreateIPFunc: func(ctx context.Context, region string) (string, error) {
-								assert.GreaterOrEqual(t, len(tc.createIPs), 1, "unexpected CreateIP call")
-								ip := tc.createIPs[0]
-								tc.createIPs = tc.createIPs[1:]
-								return ip, nil
-							},
+				providers: provider.NewRegistry(provider.WithProvider(&provider.MockProvider{
+					MockIPProvider: &provider.MockIPProvider{
+						IPToProviderIDFunc: func(ctx context.Context, ip string) (string, error) {
+							return ipAssignment[ip], nil
 						},
-						MockDNSProvider: &provider.MockDNSProvider{
-							EnsureDNSARecordSetFunc: func(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
-								desired := k8s.Spec.DesiredIPs
-								if desired == 0 {
-									desired = len(k8s.Spec.IPs)
-								}
-								assert.Len(t, ips, desired)
-								assert.Equal(t, k8s.Spec.DNSRecordSet.Zone, zone)
-								assert.Equal(t, k8s.Spec.DNSRecordSet.RecordName, recordName)
-								assert.Equal(t, k8s.Spec.DNSRecordSet.TTL, ttl)
-								ensureDNSARecordSetCalls++
-								return nil
-							},
+						AssignIPFunc: func(ctx context.Context, ip, providerID string) error {
+							assignIPCalls++
+							ipAssignment[ip] = providerID
+							return nil
+						},
+						CreateIPFunc: func(ctx context.Context, region string) (string, error) {
+							assert.GreaterOrEqual(t, len(tc.createIPs), 1, "unexpected CreateIP call")
+							ip := tc.createIPs[0]
+							tc.createIPs = tc.createIPs[1:]
+							return ip, nil
+						},
+					},
+					MockDNSProvider: &provider.MockDNSProvider{
+						EnsureDNSARecordSetFunc: func(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
+							desired := k8s.Spec.DesiredIPs
+							if desired == 0 {
+								desired = len(k8s.Spec.IPs)
+							}
+							assert.Len(t, ips, desired)
+							assert.Equal(t, k8s.Spec.DNSRecordSet.Zone, zone)
+							assert.Equal(t, k8s.Spec.DNSRecordSet.RecordName, recordName)
+							assert.Equal(t, k8s.Spec.DNSRecordSet.TTL, ttl)
+							ensureDNSARecordSetCalls++
+							return nil
+						},
+						RecordNameAndZoneToFQDNFunc: func(zone, recordName string) string {
+							return recordName + "." + zone
 						},
 					},
 				},
+				)),
 				pools: make(map[string]floatingIPPool),
 				ctx:   ctx,
 				log:   log,
@@ -403,6 +472,10 @@ func TestFloatingIPPoolUpdateK8s(t *testing.T) {
 				require.Equal(t, providerID, updatedK8s.Status.IPs[ip].ProviderID)
 			}
 			require.Equal(t, tc.expectSetDNSCalls, ensureDNSARecordSetCalls)
+
+			metrics, err := renderMetrics(c)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expectMetrics, metrics)
 		})
 	}
 }
@@ -427,4 +500,48 @@ func makeFloatingIPPool() *flipopv1alpha1.FloatingIPPool {
 			},
 		},
 	}
+}
+
+func renderMetrics(c prometheus.Collector) (string, error) {
+	metricRegistry := prometheus.NewPedanticRegistry()
+	if err := metricRegistry.Register(c); err != nil {
+		return "", err
+	}
+	metrics, err := metricRegistry.Gather()
+	if err != nil {
+		return "", err
+	}
+	var rendered bytes.Buffer
+	encoder := expfmt.NewEncoder(&rendered, expfmt.FmtText)
+families:
+	for _, f := range metrics {
+		var v float64
+		for _, m := range f.GetMetric() {
+			switch f.GetType() {
+			case dto.MetricType_COUNTER:
+				v = m.GetCounter().GetValue()
+			case dto.MetricType_GAUGE:
+				v = m.Gauge.GetValue()
+			default:
+				return "", errors.New("unknown metric type")
+			}
+			if v != 0.0 {
+				// only encode metric families w/ values to make tests less verbose.
+				if err := encoder.Encode(f); err != nil {
+					return "", err
+				}
+				continue families
+			}
+		}
+	}
+	scanner := bufio.NewScanner(&rendered)
+	var out string
+	for scanner.Scan() {
+		l := scanner.Text()
+		if strings.HasPrefix(l, "#") {
+			continue
+		}
+		out += l + "\n"
+	}
+	return out, scanner.Err()
 }

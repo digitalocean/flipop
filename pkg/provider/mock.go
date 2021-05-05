@@ -70,7 +70,8 @@ func (m *MockIPProvider) GetProviderName() string {
 
 // MockDNSProvider implements the DNSProvider interface for testing.
 type MockDNSProvider struct {
-	EnsureDNSARecordSetFunc func(ctx context.Context, zone, recordName string, ips []string, ttl int) error
+	EnsureDNSARecordSetFunc     func(ctx context.Context, zone, recordName string, ips []string, ttl int) error
+	RecordNameAndZoneToFQDNFunc func(zone, recordName string) string
 }
 
 // GetProviderName returns an identifier for the provider which can be used in resources.
@@ -82,4 +83,9 @@ func (m *MockDNSProvider) GetProviderName() string {
 // and no others.
 func (m *MockDNSProvider) EnsureDNSARecordSet(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
 	return m.EnsureDNSARecordSetFunc(ctx, zone, recordName, ips, ttl)
+}
+
+// RecordNameAndZoneToFQDN translates a zone+recordName into a fully-qualified domain name.
+func (m *MockDNSProvider) RecordNameAndZoneToFQDN(zone, recordName string) string {
+	return m.RecordNameAndZoneToFQDNFunc(zone, recordName)
 }

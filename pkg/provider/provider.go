@@ -19,6 +19,10 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -31,10 +35,16 @@ var (
 	// ErrNodeInUse is returned when the action cannot be completed because the IP already
 	// has an IP.
 	ErrNodeInUse = NewRetryError(errors.New("node in use"), RetrySlow)
+
+	errNoCredentials = errors.New("no credentials found")
 )
 
 const (
 	dnsRecordTypeA = "A"
+
+	metricNamespace = "flipop"
+
+	metricSubsystem = "providers"
 )
 
 // BaseProvider describes all providers.
@@ -68,4 +78,82 @@ type DNSProvider interface {
 	// EnsureDNSARecordSet ensures that the record set w/ name `recordName` contains all IPs listed in `ips`
 	// and no others.
 	EnsureDNSARecordSet(ctx context.Context, zone, recordName string, ips []string, ttl int) error
+
+	// RecordNameAndZoneToFQDN translates a zone+recordName into a fully-qualified domain name.
+	RecordNameAndZoneToFQDN(zone, recordName string) string
+}
+
+// Registry holds active providers and the material to initialize them.
+type Registry struct {
+	providers map[string]BaseProvider
+	metrics   *metrics
+	log       logrus.FieldLogger
+}
+
+// NewRegistry creates a new registry with the provided options.
+func NewRegistry(opts ...RegistryOption) *Registry {
+	r := &Registry{
+		providers: make(map[string]BaseProvider),
+		metrics:   initMetrics(),
+	}
+
+	for _, o := range opts {
+		o(r)
+	}
+	return r
+}
+
+// Get returns the named provider.
+func (r *Registry) Get(name string) BaseProvider {
+	return r.providers[name]
+}
+
+// Register adds a provider to the registry.
+func (r *Registry) Register(name string, p BaseProvider) {
+	r.providers[name] = p
+}
+
+// Init attempts to initialize all registries with credentials loaded from the environment.
+func (r *Registry) Init() error {
+	err := r.RegisterDigitalOcean()
+	if err != nil && err != errNoCredentials {
+		return fmt.Errorf("initializing %s provider: %w", DigitalOcean, err)
+	}
+	err = r.RegisterCloudflare()
+	if err != nil && err != errNoCredentials {
+		return fmt.Errorf("initializing %s provider: %w", Cloudflare, err)
+	}
+	if len(r.providers) == 0 {
+		return errors.New("no providers initialized; set DIGITALOCEAN_ACCESS_TOKEN")
+	}
+	return nil
+}
+
+// Collect implements prometheus.Collector
+func (r *Registry) Collect(ch chan<- prometheus.Metric) {
+	r.metrics.callLatency.Collect(ch)
+	r.metrics.callsTotal.Collect(ch)
+}
+
+// Collect implements prometheus.Collector
+func (r *Registry) Describe(ch chan<- *prometheus.Desc) {
+	r.metrics.callLatency.Describe(ch)
+	r.metrics.callsTotal.Describe(ch)
+}
+
+// RegistryOption describes an option function for Registry.
+type RegistryOption func(*Registry)
+
+// WithLogger sets a logger on the registry which can be used when initializing providers.
+func WithLogger(log logrus.FieldLogger) RegistryOption {
+	return func(r *Registry) {
+		r.log = log
+	}
+}
+
+// WithProvider initializes the registry with the specified provider.
+func WithProvider(p BaseProvider) RegistryOption {
+	return func(r *Registry) {
+		r.providers[p.GetProviderName()] = p
+	}
 }

@@ -29,6 +29,9 @@ spec:
         image: digitaloceanapps/flipop:latest
         imagePullPolicy: Always
         name: flipop
+        ports:
+        - containerPort: 8080
+          name: prometheus
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       serviceAccount: flipop

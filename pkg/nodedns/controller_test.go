@@ -17,14 +17,21 @@
 package nodedns
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	kt "github.com/digitalocean/flipop/pkg/k8stest"
 	"github.com/digitalocean/flipop/pkg/log"
 	"github.com/digitalocean/flipop/pkg/provider"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
@@ -65,6 +72,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		initialObjs      []metav1.Object
 		expectSetDNSCall []setDNSCall
 		expectError      string
+		expectMetrics    string
 	}{
 		{
 			name:     "happy path",
@@ -78,6 +86,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
 			},
 			expectSetDNSCall: []setDNSCall{{ips: []string{"10.0.0.1", "10.0.0.3"}, cancel: true}},
+			expectMetrics:    `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 2` + "\n",
 		},
 		{
 			name:     "retry",
@@ -93,6 +102,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				},
 				{ips: []string{"10.0.0.1"}, cancel: true},
 			},
+			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 1` + "\n",
 		},
 		{
 			name:     "update error",
@@ -144,7 +154,8 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 					},
 				},
 			},
-			expectError: `unknown provider "unknown"`,
+			expectError:   `unknown provider "unknown"`,
+			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 1` + "\n",
 		},
 		{
 			name:     "node no-longer matches",
@@ -164,6 +175,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 					},
 				},
 				{ips: []string{"10.0.0.1"}, cancel: true}},
+			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 1` + "\n",
 		},
 		{
 			name:     "new node matches",
@@ -183,6 +195,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 					},
 				},
 				{ips: []string{"10.0.0.1", "10.0.0.3"}, cancel: true}},
+			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 2` + "\n",
 		},
 		{
 			name:     "match updated",
@@ -209,6 +222,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				},
 				{ips: []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"}, cancel: true},
 			},
+			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 3` + "\n",
 		},
 		{
 			name:     "target updated",
@@ -238,6 +252,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 					zone:       "argolis.cluster",
 				},
 			},
+			expectMetrics: `flipop_nodednsrecordset_records{dns="ingress.argolis.cluster",name="next-generation",namespace="default",provider="mock"} 2` + "\n",
 		},
 	}
 	for _, tc := range tcs {
@@ -248,14 +263,15 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 
 			log := log.NewTestLogger(t)
 			c := &Controller{
-				kubeCS:   kubeCSFake.NewSimpleClientset(kt.AsRuntimeObjects(tc.initialObjs)...),
-				flipopCS: flipCSFake.NewSimpleClientset(tc.resource),
-				children: make(map[string]*dnsEnablerDisabler),
-				ctx:      ctx,
-				log:      log,
+				kubeCS:        kubeCSFake.NewSimpleClientset(kt.AsRuntimeObjects(tc.initialObjs)...),
+				flipopCS:      flipCSFake.NewSimpleClientset(tc.resource),
+				children:      make(map[string]*dnsEnablerDisabler),
+				ctx:           ctx,
+				log:           log,
+				metricRecords: prometheus.NewGaugeVec(recordsOpts, recordsLabels),
 			}
-			c.providers = map[string]provider.BaseProvider{
-				provider.Mock: &provider.MockProvider{MockDNSProvider: &provider.MockDNSProvider{
+			c.providers = provider.NewRegistry(
+				provider.WithProvider(&provider.MockProvider{MockDNSProvider: &provider.MockDNSProvider{
 					EnsureDNSARecordSetFunc: func(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
 						require.NotEmpty(t, tc.expectSetDNSCall, "unexpected call to EnsureDNSARecordSet")
 						expected := tc.expectSetDNSCall[0]
@@ -280,8 +296,11 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 						}
 						return expected.err
 					},
+					RecordNameAndZoneToFQDNFunc: func(zone, recordName string) string {
+						return recordName + "." + zone
+					},
 				}},
-			}
+				))
 
 			if tc.expectError != "" {
 				// Watch for the error update, so we know when to stop the test.
@@ -309,6 +328,53 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 			require.NotNil(t, updatedNodeDNS)
 			require.Equal(t, tc.expectError, updatedNodeDNS.Status.Error)
 			require.Empty(t, tc.expectSetDNSCall)
+			metrics, err := renderMetrics(c)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expectMetrics, metrics)
 		})
 	}
+}
+
+func renderMetrics(c prometheus.Collector) (string, error) {
+	metricRegistry := prometheus.NewPedanticRegistry()
+	if err := metricRegistry.Register(c); err != nil {
+		return "", err
+	}
+	metrics, err := metricRegistry.Gather()
+	if err != nil {
+		return "", err
+	}
+	var rendered bytes.Buffer
+	encoder := expfmt.NewEncoder(&rendered, expfmt.FmtText)
+families:
+	for _, f := range metrics {
+		var v float64
+		for _, m := range f.GetMetric() {
+			switch f.GetType() {
+			case dto.MetricType_COUNTER:
+				v = m.GetCounter().GetValue()
+			case dto.MetricType_GAUGE:
+				v = m.Gauge.GetValue()
+			default:
+				return "", errors.New("unknown metric type")
+			}
+			if v != 0.0 {
+				// only encode metric families w/ values to make tests less verbose.
+				if err := encoder.Encode(f); err != nil {
+					return "", err
+				}
+				continue families
+			}
+		}
+	}
+	scanner := bufio.NewScanner(&rendered)
+	var out string
+	for scanner.Scan() {
+		l := scanner.Text()
+		if strings.HasPrefix(l, "#") {
+			continue
+		}
+		out += l + "\n"
+	}
+	return out, scanner.Err()
 }

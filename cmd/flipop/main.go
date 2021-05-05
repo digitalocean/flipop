@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,6 +29,8 @@ import (
 	logutil "github.com/digitalocean/flipop/pkg/log"
 	"github.com/digitalocean/flipop/pkg/nodedns"
 	"github.com/digitalocean/flipop/pkg/provider"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -47,6 +50,7 @@ var ctx context.Context
 var log logrus.FieldLogger
 
 var kubeconfig string
+var healthBindAddr string
 
 var rootCmd = &cobra.Command{
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
@@ -74,6 +78,7 @@ func init() {
 func main() {
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "debug logging")
 	rootCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "path to kubeconfig file")
+	rootCmd.Flags().StringVar(&healthBindAddr, "metrics-bind-addr", ":8080", "bind addr for metrics server, set empty string to disable")
 	rootCmd.Execute()
 }
 
@@ -94,28 +99,55 @@ func signalContext(ctx context.Context, log logrus.FieldLogger) context.Context 
 }
 
 func runMain(cmd *cobra.Command, args []string) {
+	promRegistry := prometheus.NewPedanticRegistry()
+	promRegistry.MustRegister(
+		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
+		prometheus.NewGoCollector(),
+	)
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.HandlerFor(promRegistry, promhttp.HandlerOpts{}))
+
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if kubeconfig != "" {
 		rules.ExplicitPath = kubeconfig
 	}
 	config := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{})
-	providers := initProviders(log)
-	if len(providers) == 0 {
-		fmt.Fprintf(os.Stdout, "No providers initialized. Set DIGITALOCEAN_ACCESS_TOKEN\n")
+
+	providers := provider.NewRegistry(provider.WithLogger(log))
+	if err := providers.Init(); err != nil {
+		fmt.Fprintln(os.Stdout, err.Error())
 		os.Exit(1)
 	}
-	flipCtrl, err := floatingip.NewController(config, providers, log)
+	if err := promRegistry.Register(providers); err != nil {
+		fmt.Fprintf(os.Stdout, "Failed to register providers with prometheus: %s\n", err)
+		os.Exit(1)
+	}
+
+	flipCtrl, err := floatingip.NewController(config, providers, log, promRegistry)
 	if err != nil {
 		fmt.Fprintf(os.Stdout, "Failed to create Floating IP Pool controller: %s\n", err)
 		os.Exit(1)
 	}
+	if err := promRegistry.Register(flipCtrl); err != nil {
+		fmt.Fprintf(os.Stdout, "Failed to register Floating IP Pool controller with prometheus: %s\n", err)
+		os.Exit(1)
+	}
+
 	nodednsCtrl, err := nodedns.NewController(config, providers, log)
 	if err != nil {
 		fmt.Fprintf(os.Stdout, "Failed to create NodeDNSRecordSet controller: %s\n", err)
 		os.Exit(1)
 	}
+	if err := promRegistry.Register(nodednsCtrl); err != nil {
+		fmt.Fprintf(os.Stdout, "Failed to register NodeDNSRecordSet controller with prometheus: %s\n", err)
+		os.Exit(1)
+	}
 
 	ns, _, err := config.Namespace()
+	if err != nil {
+		fmt.Fprintf(os.Stdout, "determining kubernetes namespace: %s\n", err)
+		os.Exit(1)
+	}
 	clientConfig, err := config.ClientConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stdout, "building kubernetes client config: %s\n", err)
@@ -126,21 +158,15 @@ func runMain(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stdout, "creating kubernetes client: %s\n", err)
 		os.Exit(1)
 	}
-	leaderelection.LeaderElection(ctx, log, ns, leaderElectionResource, kubeCS, flipCtrl.Run, nodednsCtrl.Run)
-}
 
-func initProviders(log logrus.FieldLogger) map[string]provider.BaseProvider {
-	out := make(map[string]provider.BaseProvider)
-	do := provider.NewDigitalOcean(log)
-	if do != nil {
-		out[do.GetProviderName()] = do
+	if healthBindAddr != "" {
+		go func() {
+			if err := http.ListenAndServe(healthBindAddr, metricsMux); err != nil {
+				fmt.Fprintf(os.Stdout, "failed to start metrics server (metrics-bind-addr=%q): %s\n", healthBindAddr, err)
+				os.Exit(1)
+			}
+		}()
 	}
-	cf, err := provider.NewCloudflare(log)
-	if err != nil {
-		log.WithError(err).Fatal("initializing Cloudflare provider")
-	}
-	if cf != nil {
-		out[cf.GetProviderName()] = cf
-	}
-	return out
+
+	leaderelection.LeaderElection(ctx, log, ns, leaderElectionResource, kubeCS, flipCtrl.Run, nodednsCtrl.Run)
 }

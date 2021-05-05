@@ -24,33 +24,75 @@ import (
 	"os"
 
 	"github.com/cloudflare/cloudflare-go"
+	"github.com/digitalocean/flipop/pkg/metacontext"
 	"github.com/sirupsen/logrus"
 )
 
 // Cloudflare is the provider identifier used to identify the Cloudflare provider.
 const Cloudflare = "cloudflare"
 
+// CloudflareOption defines a create option for the Cloudflare provider.
+type CloudflareOption func(c *cloudflareDNS)
+
+// CloudflareWithLog sets a logrus.FieldLogger on the Cloudflare provider.
+func CloudflareWithLog(ll logrus.FieldLogger) CloudflareOption {
+	return func(c *cloudflareDNS) {
+		c.log = ll.WithField("provider", Cloudflare)
+	}
+}
+
+func cloudflareWithMetrics(m *metrics) CloudflareOption {
+	return func(c *cloudflareDNS) {
+		c.metrics = m.withProvider(Cloudflare)
+	}
+}
+
 type cloudflareDNS struct {
-	api *cloudflare.API
-	log logrus.FieldLogger
+	token   string
+	api     *cloudflare.API
+	log     logrus.FieldLogger
+	metrics *metrics
+}
+
+// RegisterCloudflare creates the Cloudflare DNS provider and registers it in the registry.
+func (r *Registry) RegisterCloudflare(opts ...CloudflareOption) error {
+	opts = append([]CloudflareOption{
+		CloudflareWithLog(r.log),
+		cloudflareWithMetrics(r.metrics),
+	}, opts...)
+	cf, err := NewCloudflare(opts...)
+	if err != nil {
+		return err
+	}
+	r.providers[cf.GetProviderName()] = cf
+	return nil
 }
 
 // NewCloudflare creates a new Cloudflare DNS provider.
-func NewCloudflare(log logrus.FieldLogger) (DNSProvider, error) {
-	token := os.Getenv("CLOUDFLARE_TOKEN")
-	if token == "" {
-		return nil, nil
+func NewCloudflare(opts ...CloudflareOption) (DNSProvider, error) {
+	c := &cloudflareDNS{
+		token: os.Getenv("CLOUDFLARE_TOKEN"),
 	}
-	api, err := cloudflare.NewWithAPIToken(token)
-	return &cloudflareDNS{api: api, log: log}, err
+	for _, o := range opts {
+		o(c)
+	}
+	if c.token == "" {
+		return nil, errNoCredentials
+	}
+	var err error
+	c.api, err = cloudflare.NewWithAPIToken(c.token)
+	return c, err
 }
 
 func (c *cloudflareDNS) GetProviderName() string {
 	return Cloudflare
 }
 
-func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
-	log := c.log.WithFields(logrus.Fields{"zone": zone, "record_name": recordName})
+func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordName string, ips []string, ttl int) (err error) {
+	done := c.metrics.startCall(ctx)
+	defer done(&err)
+	var log logrus.FieldLogger = c.log.WithFields(logrus.Fields{"zone": zone, "record_name": recordName})
+	log = metacontext.AddKubeMetadataToLogger(ctx, log)
 	var toDelete []string
 	ipSet := make(map[string]struct{})
 	for _, ip := range ips {
@@ -117,6 +159,11 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 	}
 	log.Debug("completed updating a record")
 	return nil
+}
+
+// RecordNameAndZoneToFQDN translates a zone+recordName into a fully-qualified domain name.
+func (c *cloudflareDNS) RecordNameAndZoneToFQDN(_, recordName string) string {
+	return recordName
 }
 
 func (c *cloudflareDNS) toRetryError(err error) error {
