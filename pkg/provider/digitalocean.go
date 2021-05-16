@@ -111,6 +111,9 @@ func NewDigitalOcean(opts ...DigitalOceanOption) (BaseProvider, error) {
 		floatingIPActions: make(map[string]*doAction),
 		token:             os.Getenv("DIGITALOCEAN_ACCESS_TOKEN"),
 	}
+	for _, o := range opts {
+		o(do)
+	}
 	if do.token == "" {
 		return nil, errNoCredentials
 	}
