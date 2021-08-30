@@ -37,6 +37,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	kubetypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/uuid"
 
 	kubeCSFake "k8s.io/client-go/kubernetes/fake"
 
@@ -51,6 +53,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "next-generation",
 			Namespace: "default",
+			UID:       uuid.NewUUID(),
 		},
 		Spec: flipopv1alpha1.NodeDNSRecordSetSpec{
 			DNSRecordSet: kt.MakeDNS(),
@@ -126,6 +129,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "next-generation",
 					Namespace: "default",
+					UID:       uuid.NewUUID(),
 				},
 				Spec: flipopv1alpha1.NodeDNSRecordSetSpec{
 					Match: flipopv1alpha1.Match{NodeLabel: "system=wolf359"},
@@ -265,7 +269,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 			c := &Controller{
 				kubeCS:        kubeCSFake.NewSimpleClientset(kt.AsRuntimeObjects(tc.initialObjs)...),
 				flipopCS:      flipCSFake.NewSimpleClientset(tc.resource),
-				children:      make(map[string]*dnsEnablerDisabler),
+				children:      make(map[kubetypes.UID]*dnsEnablerDisabler),
 				ctx:           ctx,
 				log:           log,
 				metricRecords: prometheus.NewGaugeVec(recordsOpts, recordsLabels),
