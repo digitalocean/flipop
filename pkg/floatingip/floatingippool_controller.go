@@ -30,6 +30,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubetypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
@@ -50,7 +51,7 @@ type Controller struct {
 
 	providers *provider.Registry
 
-	pools    map[string]floatingIPPool
+	pools    map[kubetypes.UID]floatingIPPool
 	poolLock sync.Mutex
 
 	log logrus.FieldLogger
@@ -73,7 +74,7 @@ func NewController(
 ) (*Controller, error) {
 	c := &Controller{
 		providers: providers,
-		pools:     make(map[string]floatingIPPool),
+		pools:     make(map[kubetypes.UID]floatingIPPool),
 		log:       log,
 	}
 	var err error
@@ -140,14 +141,14 @@ func (c *Controller) OnDelete(obj interface{}) {
 	}
 	c.poolLock.Lock()
 	defer c.poolLock.Unlock()
-	pool, ok := c.pools[k8sPool.GetSelfLink()]
+	pool, ok := c.pools[k8sPool.GetUID()]
 	if !ok {
 		return
 	}
 	c.log.WithField("floating_ip_pool", fmt.Sprintf("%s/%s", k8sPool.Namespace, k8sPool.Name)).Info("pool deleted")
 	pool.matchController.Stop()
 	pool.ipController.stop()
-	delete(c.pools, k8sPool.GetSelfLink())
+	delete(c.pools, k8sPool.GetUID())
 }
 
 func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
@@ -156,13 +157,13 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 	log := c.log.WithField("floating_ip_pool", fmt.Sprintf("%s/%s", k8sPool.Namespace, k8sPool.Name))
 	isValid := c.validate(log, k8sPool)
 
-	pool, isKnownPool := c.pools[k8sPool.GetSelfLink()]
+	pool, isKnownPool := c.pools[k8sPool.GetUID()]
 	if isKnownPool && !pool.matchController.IsCriteriaEqual(&k8sPool.Spec.Match) {
 		isKnownPool = false
 		log.Info("match criteria changed, resetting")
 		pool.matchController.Stop()
 		pool.ipController.stop()
-		delete(c.pools, k8sPool.GetSelfLink())
+		delete(c.pools, k8sPool.GetUID())
 	}
 	ctx := metacontext.WithKubeObject(c.ctx, k8sPool)
 	if !isKnownPool {
@@ -181,13 +182,13 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 		pool.matchController.SetCriteria(&k8sPool.Spec.Match)
 		pool.matchController.Start(ctx)
 		log.Info("FloatingIPPool added; beginning reconciliation")
-		c.pools[k8sPool.GetSelfLink()] = pool
+		c.pools[k8sPool.GetUID()] = pool
 	}
 	if !isValid {
 		log.Info("updated FloatingIPPool spec is invalid")
 		pool.matchController.Stop()
 		pool.ipController.stop()
-		delete(c.pools, k8sPool.GetSelfLink())
+		delete(c.pools, k8sPool.GetUID())
 		return
 	}
 

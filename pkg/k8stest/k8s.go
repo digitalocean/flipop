@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	flipopv1alpha1 "github.com/digitalocean/flipop/pkg/apis/flipop/v1alpha1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 )
 
 // PodTolerations is an example kubernetes node Toleration.
@@ -91,6 +92,7 @@ func MakePod(name, nodeName string, mutators ...func(pod metav1.Object) metav1.O
 				"class":  "galaxy",
 			}),
 			Namespace: "star-fleet",
+			UID:       uuid.NewUUID(),
 		},
 		Spec: corev1.PodSpec{
 			NodeName: nodeName,
@@ -120,6 +122,7 @@ func MakeNode(name, providerID string, mutators ...func(node metav1.Object) meta
 				"vessel": "starship",
 				"class":  "galaxy",
 			}),
+			UID: uuid.NewUUID(),
 		},
 		Spec: corev1.NodeSpec{
 			ProviderID: providerID,

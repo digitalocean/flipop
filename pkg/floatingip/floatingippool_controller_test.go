@@ -31,12 +31,14 @@ import (
 	"github.com/prometheus/common/expfmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/uuid"
 
 	kt "github.com/digitalocean/flipop/pkg/k8stest"
 	"github.com/digitalocean/flipop/pkg/log"
 	"github.com/digitalocean/flipop/pkg/provider"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubetypes "k8s.io/apimachinery/pkg/types"
 	kubeCSFake "k8s.io/client-go/kubernetes/fake"
 
 	flipCSFake "github.com/digitalocean/flipop/pkg/apis/flipop/generated/clientset/versioned/fake"
@@ -407,7 +409,7 @@ flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",na
 					},
 				},
 				)),
-				pools: make(map[string]floatingIPPool),
+				pools: make(map[kubetypes.UID]floatingIPPool),
 				ctx:   ctx,
 				log:   log,
 			}
@@ -425,7 +427,7 @@ flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",na
 				return
 			}
 
-			f, ok := c.pools[k8s.GetSelfLink()]
+			f, ok := c.pools[k8s.GetUID()]
 			require.True(t, ok)
 
 			// Watch for status updates.
@@ -484,6 +486,7 @@ func makeFloatingIPPool() *flipopv1alpha1.FloatingIPPool {
 	return &flipopv1alpha1.FloatingIPPool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "deep-space-nine",
+			UID:  uuid.NewUUID(),
 		},
 		Spec: flipopv1alpha1.FloatingIPPoolSpec{
 			Provider: "mock",

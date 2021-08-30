@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 )
 
 type fakeMetricsProvider struct {
@@ -35,6 +36,7 @@ func TestMetricsStartCall(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "obj-name",
 			Namespace: "obj-namespace",
+			UID:       uuid.NewUUID(),
 		},
 	}
 	// This normally happens on the APIserver, but locally we have to do it ourselves.

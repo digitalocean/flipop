@@ -28,6 +28,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 
 	"github.com/digitalocean/flipop/pkg/log"
 	"github.com/digitalocean/flipop/pkg/provider"
@@ -456,7 +457,7 @@ func TestIPControllerDisableNodes(t *testing.T) {
 				tc.setup(i)
 			}
 			i.DisableNodes(&corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "hello-world"},
+				ObjectMeta: metav1.ObjectMeta{Name: "hello-world", UID: uuid.NewUUID()},
 				Spec:       corev1.NodeSpec{ProviderID: "mock://1"},
 			})
 			require.False(t, i.assignableNodes.IsSet("mock://"))
@@ -504,7 +505,7 @@ func TestIPControllers(t *testing.T) {
 				tc.setup(i)
 			}
 			i.EnableNodes(&corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "hello-world"},
+				ObjectMeta: metav1.ObjectMeta{Name: "hello-world", UID: uuid.NewUUID()},
 				Spec:       corev1.NodeSpec{ProviderID: "mock://1"},
 			})
 			require.Equal(t, tc.expectAssignable, i.assignableNodes.IsSet("mock://1"))

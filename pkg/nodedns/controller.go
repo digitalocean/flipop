@@ -39,6 +39,7 @@ import (
 	flipopv1alpha1 "github.com/digitalocean/flipop/pkg/apis/flipop/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubetypes "k8s.io/apimachinery/pkg/types"
 )
 
 const (
@@ -52,7 +53,7 @@ type Controller struct {
 
 	providers *provider.Registry
 
-	children map[string]*dnsEnablerDisabler
+	children map[kubetypes.UID]*dnsEnablerDisabler
 	lock     sync.Mutex
 
 	log logrus.FieldLogger
@@ -69,7 +70,7 @@ func NewController(
 ) (*Controller, error) {
 	c := &Controller{
 		providers:     providers,
-		children:      make(map[string]*dnsEnablerDisabler),
+		children:      make(map[kubetypes.UID]*dnsEnablerDisabler),
 		log:           log,
 		metricRecords: prometheus.NewGaugeVec(recordsOpts, recordsLabels),
 	}
@@ -135,7 +136,7 @@ func (c *Controller) OnDelete(obj interface{}) {
 	}
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	nodeDNS, ok := c.children[nrs.GetSelfLink()]
+	nodeDNS, ok := c.children[nrs.GetUID()]
 	if !ok {
 		return
 	}
@@ -143,7 +144,7 @@ func (c *Controller) OnDelete(obj interface{}) {
 		fmt.Sprintf("%s/%s", nrs.Namespace, nrs.Name)).Info("node dns resource deleted")
 	nodeDNS.stop()
 	c.metricRecords.Delete(nodeDNS.metricLabels())
-	delete(c.children, nrs.GetSelfLink())
+	delete(c.children, nrs.GetUID())
 }
 
 func (c *Controller) updateOrAdd(nrs *flipopv1alpha1.NodeDNSRecordSet) {
@@ -154,19 +155,19 @@ func (c *Controller) updateOrAdd(nrs *flipopv1alpha1.NodeDNSRecordSet) {
 	isValid := c.validate(log, nrs)
 
 	ctx := metacontext.WithKubeObject(c.ctx, nrs)
-	nodeDNS, known := c.children[nrs.GetSelfLink()]
+	nodeDNS, known := c.children[nrs.GetUID()]
 	if !known {
 		if !isValid {
 			return // c.validate logs & updates the NodeDNSRecordSet's status to indicate the error.
 		}
 		nodeDNS = newDNSEnablerDisabler(ctx, c.log, c.kubeCS, c.flipopCS)
 		log.Info("NodeDNSRecordSet added; beginning reconciliation")
-		c.children[nrs.GetSelfLink()] = nodeDNS
+		c.children[nrs.GetUID()] = nodeDNS
 	}
 	if !isValid {
 		log.Info("updated NodeDNSRecordSet spec is invalid")
 		nodeDNS.stop()
-		delete(c.children, nrs.GetSelfLink())
+		delete(c.children, nrs.GetUID())
 		return
 	}
 
