@@ -79,8 +79,17 @@ func NewCloudflare(opts ...CloudflareOption) (DNSProvider, error) {
 	if c.token == "" {
 		return nil, errNoCredentials
 	}
+	var cfOptions []cloudflare.Option
+	if baseURL := os.Getenv("CLOUDFLARE_API_URL"); baseURL != "" {
+		cfOptions = append(cfOptions, cloudflare.BaseURL(baseURL))
+	}
+	if userAgent := os.Getenv("CLOUDFLARE_USER_AGENT"); userAgent != "" {
+		cfOptions = append(cfOptions, cloudflare.UserAgent(userAgent))
+	} else {
+		cfOptions = append(cfOptions, cloudflare.UserAgent(defaultUserAgent()))
+	}
 	var err error
-	c.api, err = cloudflare.NewWithAPIToken(c.token)
+	c.api, err = cloudflare.NewWithAPIToken(c.token, cfOptions...)
 	return c, err
 }
 

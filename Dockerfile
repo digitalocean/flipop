@@ -1,7 +1,8 @@
 FROM flipop-dev AS flipopbuilder
+ARG FLIPOP_VERSION dev
 WORKDIR /go/src/github.com/digitalocean/flipop
 COPY . /go/src/github.com/digitalocean/flipop
-RUN go build ./cmd/flipop
+RUN go build -ldflags "-s -w -X github.com/digitalocean/flipop/pkg/version.Version=$FLIPOP_VERSION" ./cmd/flipop
 
 FROM debian:buster-slim
 WORKDIR /app
