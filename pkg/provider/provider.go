@@ -20,7 +20,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 
+	"github.com/digitalocean/flipop/pkg/version"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 )
@@ -156,4 +158,8 @@ func WithProvider(p BaseProvider) RegistryOption {
 	return func(r *Registry) {
 		r.providers[p.GetProviderName()] = p
 	}
+}
+
+func defaultUserAgent() string {
+	return fmt.Sprintf("flipop/%s (%s %s)", version.Version, runtime.GOOS, runtime.GOARCH)
 }

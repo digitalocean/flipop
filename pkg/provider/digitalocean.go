@@ -121,8 +121,21 @@ func NewDigitalOcean(opts ...DigitalOceanOption) (BaseProvider, error) {
 		AccessToken: do.token,
 	}
 
+	var godoOpts []godo.ClientOpt
+	if baseURL := os.Getenv("DIGITALOCEAN_API_URL"); baseURL != "" {
+		godoOpts = append(godoOpts, godo.SetBaseURL(baseURL))
+	}
+	if userAgent := os.Getenv("DIGITALOCEAN_USER_AGENT"); userAgent != "" {
+		godoOpts = append(godoOpts, godo.SetUserAgent(userAgent))
+	} else {
+		godoOpts = append(godoOpts, godo.SetUserAgent(defaultUserAgent()))
+	}
+
 	oauthClient := oauth2.NewClient(context.Background(), tokenSource)
-	client := godo.NewClient(oauthClient)
+	client, err := godo.New(oauthClient, godoOpts...)
+	if err != nil {
+		return nil, err
+	}
 	do.domainsService = client.Domains
 	do.ipsService = client.FloatingIPs
 	do.ipActionsService = client.FloatingIPActions

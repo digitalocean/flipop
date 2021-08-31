@@ -29,6 +29,7 @@ import (
 	logutil "github.com/digitalocean/flipop/pkg/log"
 	"github.com/digitalocean/flipop/pkg/nodedns"
 	"github.com/digitalocean/flipop/pkg/provider"
+	"github.com/digitalocean/flipop/pkg/version"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/client-go/kubernetes"
@@ -71,7 +72,7 @@ func init() {
 	logrus.SetLevel(logrus.InfoLevel)
 
 	ctx = context.Background()
-	log = logutil.FromContext(ctx)
+	log = logutil.FromContext(ctx).WithField("version", version.Version)
 	ctx = logutil.AddToContext(signalContext(ctx, log), log)
 }
 

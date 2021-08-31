@@ -4,7 +4,7 @@ go 1.16
 
 require (
 	github.com/cloudflare/cloudflare-go v0.15.0
-	github.com/digitalocean/godo v1.31.0
+	github.com/digitalocean/godo v1.65.0
 	github.com/golang/mock v1.4.1
 	github.com/imdario/mergo v0.3.6 // indirect
 	github.com/mattn/go-isatty v0.0.10

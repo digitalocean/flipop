@@ -3,7 +3,7 @@ COMMIT ?= $(shell git rev-parse --short HEAD)
 SHELL=/bin/bash -o pipefail
 
 image: dev-image
-	docker build -t digitaloceanapps/flipop:$(COMMIT) .
+	docker build --build-arg=FLIPOP_VERSION=$(COMMIT) -t digitaloceanapps/flipop:$(COMMIT) .
 ifdef latest
 	docker tag digitaloceanapps/flipop:$(COMMIT) digitaloceanapps/flipop:latest
 endif

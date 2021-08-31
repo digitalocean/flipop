@@ -25,7 +25,7 @@ import (
 
 	"github.com/digitalocean/flipop/pkg/log"
 
-	"github.com/digitalocean/flipop/pkg/provider/mockgodo"
+	"github.com/digitalocean/flipop/pkg/provider/mock_godo"
 	"github.com/golang/mock/gomock"
 
 	"github.com/stretchr/testify/require"
@@ -82,7 +82,7 @@ func TestDigitalOceanEnsureDNSARecordSet(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 
-			domainsService := mockgodo.NewMockDomainsService(ctrl)
+			domainsService := mock_godo.NewMockDomainsService(ctrl)
 
 			curIPSet := make(map[string]struct{})
 			for _, ip := range tc.curIPs {
