@@ -76,6 +76,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		expectSetDNSCall []setDNSCall
 		expectError      string
 		expectMetrics    string
+		expectState      flipopv1alpha1.NodeDNSRecordState
 	}{
 		{
 			name:     "happy path",
@@ -90,6 +91,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 			},
 			expectSetDNSCall: []setDNSCall{{ips: []string{"10.0.0.1", "10.0.0.3"}, cancel: true}},
 			expectMetrics:    `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 2` + "\n",
+			expectState:      flipopv1alpha1.NodeDNSRecordActive,
 		},
 		{
 			name:     "retry",
@@ -106,6 +108,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				{ips: []string{"10.0.0.1"}, cancel: true},
 			},
 			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 1` + "\n",
+			expectState:   flipopv1alpha1.NodeDNSRecordActive,
 		},
 		{
 			name:     "update error",
@@ -122,6 +125,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				},
 			},
 			expectError: "Failed to update DNS: nope",
+			expectState: flipopv1alpha1.NodeDNSRecordInProgress,
 		},
 		{
 			name: "invalid",
@@ -139,6 +143,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				},
 			},
 			expectError: "invalid dnsRecordSet specification",
+			expectState: flipopv1alpha1.NodeDNSRecordError,
 		},
 		{
 			name:     "invalid update",
@@ -160,6 +165,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 			},
 			expectError:   `unknown provider "unknown"`,
 			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 1` + "\n",
+			expectState:   flipopv1alpha1.NodeDNSRecordError,
 		},
 		{
 			name:     "node no-longer matches",
@@ -180,6 +186,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				},
 				{ips: []string{"10.0.0.1"}, cancel: true}},
 			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 1` + "\n",
+			expectState:   flipopv1alpha1.NodeDNSRecordActive,
 		},
 		{
 			name:     "new node matches",
@@ -200,6 +207,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				},
 				{ips: []string{"10.0.0.1", "10.0.0.3"}, cancel: true}},
 			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 2` + "\n",
+			expectState:   flipopv1alpha1.NodeDNSRecordActive,
 		},
 		{
 			name:     "match updated",
@@ -227,6 +235,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				{ips: []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"}, cancel: true},
 			},
 			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 3` + "\n",
+			expectState:   flipopv1alpha1.NodeDNSRecordActive,
 		},
 		{
 			name:     "target updated",
@@ -257,6 +266,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				},
 			},
 			expectMetrics: `flipop_nodednsrecordset_records{dns="ingress.argolis.cluster",name="next-generation",namespace="default",provider="mock"} 2` + "\n",
+			expectState:   flipopv1alpha1.NodeDNSRecordActive,
 		},
 	}
 	for _, tc := range tcs {
@@ -331,6 +341,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, updatedNodeDNS)
 			require.Equal(t, tc.expectError, updatedNodeDNS.Status.Error)
+			require.Equal(t, tc.expectState, updatedNodeDNS.Status.State)
 			require.Empty(t, tc.expectSetDNSCall)
 			metrics, err := renderMetrics(c)
 			require.NoError(t, err)
