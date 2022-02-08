@@ -36,6 +36,15 @@ const (
 	IPStateDisabled IPState = "disabled"
 )
 
+const (
+	// NodeDNSRecordActive indicates that the DNS record has been created.
+	NodeDNSRecordActive NodeDNSRecordState = "active"
+	// NodeDNSRecordInProgress indicates an DNS record action in progress.
+	NodeDNSRecordInProgress NodeDNSRecordState = "in-progress"
+	// NodeDNSRecordError indicates the last  DNS record action failed.
+	NodeDNSRecordError NodeDNSRecordState = "error"
+)
+
 // FloatingIPPoolSpec defines the desired state of FloatingIPPool.
 type FloatingIPPoolSpec struct {
 	// IPs is a list of floating IP addresses for assignment. IPs may be omitted or incomplete if
@@ -93,6 +102,9 @@ type FloatingIPPoolStatus struct {
 
 // IPState describes the condition of an IP.
 type IPState string
+
+// NodeDNSRecordState describes the condition of a NodeDNSRecordSet.
+type NodeDNSRecordState string
 
 // IPStatus describes the mapping between IPs and the matching
 // resources responsible for their attachment.
@@ -161,7 +173,8 @@ type NodeDNSRecordSetList struct {
 
 // NodeDNSRecordSetStatus defines the observed state of NodeDNSRecordSet.
 type NodeDNSRecordSetStatus struct {
-	Error string `json:"error,omitempty"`
+	Error string             `json:"error,omitempty"`
+	State NodeDNSRecordState `json:"state"`
 }
 
 // NodeDNSRecordSetSpec defines the desired state of NodeDNSRecordSet.

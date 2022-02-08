@@ -137,7 +137,7 @@ func (r *Registry) Collect(ch chan<- prometheus.Metric) {
 	r.metrics.callsTotal.Collect(ch)
 }
 
-// Collect implements prometheus.Collector
+// Describe implements prometheus.Collector
 func (r *Registry) Describe(ch chan<- *prometheus.Desc) {
 	r.metrics.callLatency.Describe(ch)
 	r.metrics.callsTotal.Describe(ch)

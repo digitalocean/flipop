@@ -180,7 +180,9 @@ func (c *Controller) validate(log logrus.FieldLogger, nrs *flipopv1alpha1.NodeDN
 	if prov == nil {
 		log.Warn("NodeDNSRecordSet referenced unknown provider")
 		status := &flipopv1alpha1.NodeDNSRecordSetStatus{
-			Error: fmt.Sprintf("unknown provider %q", nrs.Spec.DNSRecordSet.Provider)}
+			Error: fmt.Sprintf("unknown provider %q", nrs.Spec.DNSRecordSet.Provider),
+			State: flipopv1alpha1.NodeDNSRecordError,
+		}
 		err := updateStatus(c.ctx, c.flipopCS, nrs.Name, nrs.Namespace, status)
 		if err != nil {
 			c.log.WithError(err).Error("updating status")
@@ -191,7 +193,9 @@ func (c *Controller) validate(log logrus.FieldLogger, nrs *flipopv1alpha1.NodeDN
 		log.WithField("provider", nrs.Spec.DNSRecordSet.Provider).
 			Warn("NodeDNSRecordSet referenced provider without dns capability")
 		status := &flipopv1alpha1.NodeDNSRecordSetStatus{
-			Error: fmt.Sprintf("provider %q does not provide DNS", nrs.Spec.DNSRecordSet.Provider)}
+			Error: fmt.Sprintf("provider %q does not provide DNS", nrs.Spec.DNSRecordSet.Provider),
+			State: flipopv1alpha1.NodeDNSRecordError,
+		}
 		err := updateStatus(c.ctx, c.flipopCS, nrs.Name, nrs.Namespace, status)
 		if err != nil {
 			c.log.WithError(err).Error("updating status")
@@ -201,7 +205,10 @@ func (c *Controller) validate(log logrus.FieldLogger, nrs *flipopv1alpha1.NodeDN
 	if nrs.Spec.DNSRecordSet.Zone == "" ||
 		nrs.Spec.DNSRecordSet.RecordName == "" {
 		log.Warn("NodeDNSRecordSet had invalid dnsRecordSet specification")
-		status := &flipopv1alpha1.NodeDNSRecordSetStatus{Error: "invalid dnsRecordSet specification"}
+		status := &flipopv1alpha1.NodeDNSRecordSetStatus{
+			Error: "invalid dnsRecordSet specification",
+			State: flipopv1alpha1.NodeDNSRecordError,
+		}
 		err := updateStatus(c.ctx, c.flipopCS, nrs.Name, nrs.Namespace, status)
 		if err != nil {
 			c.log.WithError(err).Error("updating status")
@@ -211,7 +218,10 @@ func (c *Controller) validate(log logrus.FieldLogger, nrs *flipopv1alpha1.NodeDN
 	err := nodematch.ValidateMatch(&nrs.Spec.Match)
 	if err != nil {
 		log.WithError(err).Warn("NodeDNSRecordSet had invalid match criteria")
-		status := &flipopv1alpha1.NodeDNSRecordSetStatus{Error: "Error " + err.Error()}
+		status := &flipopv1alpha1.NodeDNSRecordSetStatus{
+			Error: "Error " + err.Error(),
+			State: flipopv1alpha1.NodeDNSRecordError,
+		}
 		err = updateStatus(c.ctx, c.flipopCS, nrs.Name, nrs.Namespace, status)
 		if err != nil {
 			c.log.WithError(err).Error("updating status")
@@ -348,7 +358,9 @@ func (d *dnsEnablerDisabler) applyDNS() {
 			ll.Warn("matching node had no IPs of the expected type")
 		}
 	}
-	status := &flipopv1alpha1.NodeDNSRecordSetStatus{}
+	status := &flipopv1alpha1.NodeDNSRecordSetStatus{
+		State: flipopv1alpha1.NodeDNSRecordInProgress,
+	}
 	err := d.provider.EnsureDNSARecordSet(
 		d.ctx,
 		d.k8s.Spec.DNSRecordSet.Zone,
@@ -372,6 +384,7 @@ func (d *dnsEnablerDisabler) applyDNS() {
 		status.Error = fmt.Sprintf("Failed to update DNS: %s", err.Error())
 	} else {
 		ll.Info("DNS records updated")
+		status.State = flipopv1alpha1.NodeDNSRecordActive
 	}
 	err = updateStatus(d.ctx, d.flipopCS, d.k8s.Name, d.k8s.Namespace, status)
 	if err != nil {
