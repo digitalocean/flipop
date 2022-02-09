@@ -59,6 +59,8 @@ spec:
               properties:
                 error:
                   type: string
+                state:
+                  type: string
   scope: Namespaced
   names:
     kind: NodeDNSRecordSet
