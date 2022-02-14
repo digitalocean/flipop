@@ -87,9 +87,10 @@ type DNSProvider interface {
 
 // Registry holds active providers and the material to initialize them.
 type Registry struct {
-	providers map[string]BaseProvider
-	metrics   *metrics
-	log       logrus.FieldLogger
+	providers      map[string]BaseProvider
+	metrics        *metrics
+	log            logrus.FieldLogger
+	keepLastRecord bool
 }
 
 // NewRegistry creates a new registry with the provided options.
@@ -150,6 +151,17 @@ type RegistryOption func(*Registry)
 func WithLogger(log logrus.FieldLogger) RegistryOption {
 	return func(r *Registry) {
 		r.log = log
+	}
+}
+
+// WithKeepLastDNSRecord sets the flag for keeping the last DNS record for a record name.
+// If all records for a record name are deleted we could get NXDOMAIN with possibly a very long TTL.
+// This may be undesireable.
+// Setting this flag to true will attempt to keep the last DNS record even though it may
+// point to an unhealthy IP.
+func WithKeepLastDNSRecord(v bool) RegistryOption {
+	return func(r *Registry) {
+		r.keepLastRecord = v
 	}
 }
 

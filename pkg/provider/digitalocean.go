@@ -59,7 +59,8 @@ type digitalOcean struct {
 	floatingIPActions map[string]*doAction
 	log               logrus.FieldLogger
 
-	token string
+	token          string
+	keepLastRecord bool
 
 	metrics *metrics
 }
@@ -71,6 +72,13 @@ type DigitalOceanOption func(d *digitalOcean)
 func DigitalOceanWithLog(ll logrus.FieldLogger) DigitalOceanOption {
 	return func(d *digitalOcean) {
 		d.log = ll.WithField("provider", DigitalOcean)
+	}
+}
+
+// DigitalOceanWithKeepLastDNSRecord the keep last record option.
+func DigitalOceanWithKeepLastDNSRecord(v bool) DigitalOceanOption {
+	return func(d *digitalOcean) {
+		d.keepLastRecord = v
 	}
 }
 
@@ -95,6 +103,7 @@ func (t *doTokenSource) Token() (*oauth2.Token, error) {
 func (r *Registry) RegisterDigitalOcean(opts ...DigitalOceanOption) error {
 	opts = append([]DigitalOceanOption{
 		DigitalOceanWithLog(r.log),
+		DigitalOceanWithKeepLastDNSRecord(r.keepLastRecord),
 		digitalOceanWithMetrics(r.metrics),
 	}, opts...)
 	do, err := NewDigitalOcean(opts...)
@@ -364,6 +373,9 @@ func (do *digitalOcean) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 		Name: recordName,
 		TTL:  ttl,
 	}
+
+	nRecords := 0
+
 	for {
 		// Until NETPROD-1354 is addressed we need to iterate the whole zone :-(.
 		log.WithField("page", listOptions.Page).Debug("querying records API for zone")
@@ -371,6 +383,8 @@ func (do *digitalOcean) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 		if err != nil {
 			return do.toRetryError(fmt.Errorf("listing zone records: %w", err), res)
 		}
+
+		nRecords += len(records)
 
 		for _, record := range records {
 			if (record.Name != recordName) || (record.Type != dnsRecordTypeA) {
@@ -422,13 +436,26 @@ func (do *digitalOcean) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 		}
 	}
 
+	nToDelete := len(toDelete)
+	deleteAll := nToDelete == nRecords
+	i := 0
+
 	// Clear any unneeded records.
 	for _, id := range toDelete {
+		if deleteAll && do.keepLastRecord && i == nToDelete-1 {
+			// we are deleting all records and we are about to delete the last record
+			// but keepLastRecord is set to true so skip it
+			log.WithField("record_id", id).Debug("skip deleting because it is the last one")
+			break
+		}
+
 		log.WithField("record_id", id).Debug("deleting unneeded record")
 		res, err := do.domainsService.DeleteRecord(ctx, zone, id)
 		if err != nil {
 			return do.toRetryError(fmt.Errorf("deleting record: %w", err), res)
 		}
+
+		i++
 	}
 	log.Debug("completed updating a record")
 	return nil

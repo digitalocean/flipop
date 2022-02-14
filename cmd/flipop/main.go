@@ -47,6 +47,7 @@ const (
 )
 
 var debug bool
+var keepLastRecord bool
 var ctx context.Context
 var log logrus.FieldLogger
 
@@ -80,6 +81,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "debug logging")
 	rootCmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "path to kubeconfig file")
 	rootCmd.Flags().StringVar(&healthBindAddr, "metrics-bind-addr", ":8080", "bind addr for metrics server, set empty string to disable")
+	rootCmd.Flags().BoolVar(&keepLastRecord, "keep-last-record", false, "to avoid NXDomain, keep the last DNS record for a record name even if unhealthy")
 	rootCmd.Execute()
 }
 
@@ -114,7 +116,10 @@ func runMain(cmd *cobra.Command, args []string) {
 	}
 	config := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{})
 
-	providers := provider.NewRegistry(provider.WithLogger(log))
+	providers := provider.NewRegistry(
+		provider.WithLogger(log),
+		provider.WithKeepLastDNSRecord(keepLastRecord),
+	)
 	if err := providers.Init(); err != nil {
 		fmt.Fprintln(os.Stdout, err.Error())
 		os.Exit(1)

@@ -33,11 +33,12 @@ import (
 
 func TestDigitalOceanEnsureDNSARecordSet(t *testing.T) {
 	tcs := []struct {
-		name         string
-		curIPs       []string
-		setIPs       []string
-		curTTL       int
-		totalRecords int
+		name           string
+		curIPs         []string
+		setIPs         []string
+		curTTL         int
+		totalRecords   int
+		keepLastRecord bool
 
 		expectUpdates map[int]string // id -> ip
 		expectCreates []string       // ips
@@ -73,6 +74,23 @@ func TestDigitalOceanEnsureDNSARecordSet(t *testing.T) {
 			curTTL:        30,
 			totalRecords:  513,
 			expectDeletes: []int{511},
+		},
+		{
+			name:          "delete all",
+			curIPs:        []string{"10.0.1.0", "10.0.1.255"},
+			setIPs:        []string{},
+			curTTL:        30,
+			totalRecords:  513,
+			expectDeletes: []int{256, 511},
+		},
+		{
+			name:           "delete keep last record",
+			curIPs:         []string{"10.0.0.0", "10.0.0.1", "10.0.0.2", "10.0.0.3"},
+			setIPs:         []string{},
+			curTTL:         30,
+			totalRecords:   4,
+			expectDeletes:  []int{0, 1, 2},
+			keepLastRecord: true,
 		},
 	}
 	for _, tc := range tcs {
@@ -145,6 +163,7 @@ func TestDigitalOceanEnsureDNSARecordSet(t *testing.T) {
 			do := &digitalOcean{
 				domainsService: domainsService,
 				log:            log.NewTestLogger(t),
+				keepLastRecord: tc.keepLastRecord,
 			}
 			err := do.EnsureDNSARecordSet(ctx, "zone", "match", tc.setIPs, 30)
 			require.NoError(t, err)

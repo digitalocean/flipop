@@ -41,8 +41,9 @@ func TestCloudflareEnsureDNSARecordSet(t *testing.T) {
 		name string
 		list map[string]cloudflare.DNSRecord
 
-		setTTL int
-		setIPs []string
+		setTTL         int
+		setIPs         []string
+		keepLastRecord bool
 
 		expectUpdates map[string]*cloudflare.DNSRecord
 		expectCreates map[string]*cloudflare.DNSRecord
@@ -90,6 +91,27 @@ func TestCloudflareEnsureDNSARecordSet(t *testing.T) {
 			setIPs:        []string{"10.0.1.0"},
 			setTTL:        30,
 			expectDeletes: []string{"2"},
+		},
+		{
+			name: "delete all",
+			list: map[string]cloudflare.DNSRecord{
+				"1": {Name: name, ID: "1", Content: "10.0.1.0", TTL: 30, Type: dnsRecordTypeA},
+				"2": {Name: name, ID: "2", Content: "10.0.0.1", TTL: 30, Type: dnsRecordTypeA},
+			},
+			setIPs:        []string{},
+			setTTL:        30,
+			expectDeletes: []string{"1", "2"},
+		},
+		{
+			name: "delete keep last record",
+			list: map[string]cloudflare.DNSRecord{
+				"1": {Name: name, ID: "1", Content: "10.0.1.0", TTL: 30, Type: dnsRecordTypeA},
+				"2": {Name: name, ID: "2", Content: "10.0.0.1", TTL: 30, Type: dnsRecordTypeA},
+			},
+			setIPs:         []string{},
+			setTTL:         30,
+			expectDeletes:  []string{"1"},
+			keepLastRecord: true,
 		},
 	}
 	for _, tc := range tcs {
@@ -163,8 +185,9 @@ func TestCloudflareEnsureDNSARecordSet(t *testing.T) {
 			api, err := cloudflare.NewWithAPIToken(token, cloudflare.HTTPClient(client))
 			require.NoError(t, err)
 			cf := &cloudflareDNS{
-				api: api,
-				log: log.NewTestLogger(t),
+				api:            api,
+				log:            log.NewTestLogger(t),
+				keepLastRecord: tc.keepLastRecord,
 			}
 			err = cf.EnsureDNSARecordSet(ctx, zone, name, tc.setIPs, tc.setTTL)
 			require.NoError(t, err)

@@ -41,6 +41,13 @@ func CloudflareWithLog(ll logrus.FieldLogger) CloudflareOption {
 	}
 }
 
+// CloudflareWWithKeepLastDNSRecord the keep last record option.
+func CloudflareWithKeepLastDNSRecord(v bool) CloudflareOption {
+	return func(c *cloudflareDNS) {
+		c.keepLastRecord = v
+	}
+}
+
 func cloudflareWithMetrics(m *metrics) CloudflareOption {
 	return func(c *cloudflareDNS) {
 		c.metrics = m.withProvider(Cloudflare)
@@ -48,16 +55,18 @@ func cloudflareWithMetrics(m *metrics) CloudflareOption {
 }
 
 type cloudflareDNS struct {
-	token   string
-	api     *cloudflare.API
-	log     logrus.FieldLogger
-	metrics *metrics
+	token          string
+	api            *cloudflare.API
+	log            logrus.FieldLogger
+	keepLastRecord bool
+	metrics        *metrics
 }
 
 // RegisterCloudflare creates the Cloudflare DNS provider and registers it in the registry.
 func (r *Registry) RegisterCloudflare(opts ...CloudflareOption) error {
 	opts = append([]CloudflareOption{
 		CloudflareWithLog(r.log),
+		CloudflareWithKeepLastDNSRecord(r.keepLastRecord),
 		cloudflareWithMetrics(r.metrics),
 	}, opts...)
 	cf, err := NewCloudflare(opts...)
@@ -119,6 +128,9 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 		Name: recordName,
 		TTL:  ttl,
 	}
+
+	nRecords := len(existing)
+
 	for _, record := range existing {
 		_, ok := ipSet[record.Content]
 		if ok {
@@ -158,13 +170,25 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 		}
 	}
 
+	nToDelete := len(toDelete)
+	deleteAll := nToDelete == nRecords
+	i := 0
+
 	// Clear any unneeded records.
 	for _, id := range toDelete {
+		if deleteAll && c.keepLastRecord && i == nToDelete-1 {
+			// we are deleting all records and we are about to delete the last record
+			// but keepLastRecord is set to true so skip it
+			log.WithField("record_id", id).Debug("skip deleting because it is the last one")
+			break
+		}
+
 		log.WithField("record_id", id).Debug("deleting unneeded record")
 		err := c.api.DeleteDNSRecord(ctx, zone, id)
 		if err != nil {
 			return c.toRetryError(fmt.Errorf("deleting record: %w", err))
 		}
+		i++
 	}
 	log.Debug("completed updating a record")
 	return nil
