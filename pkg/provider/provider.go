@@ -156,7 +156,7 @@ func WithLogger(log logrus.FieldLogger) RegistryOption {
 
 // WithKeepLastDNSRecord sets the flag for keeping the last DNS record for a record name.
 // If all records for a record name are deleted we could get NXDOMAIN with possibly a very long TTL.
-// This may be undesireable.
+// This may be undesirable.
 // Setting this flag to true will attempt to keep the last DNS record even though it may
 // point to an unhealthy IP.
 func WithKeepLastDNSRecord(v bool) RegistryOption {
