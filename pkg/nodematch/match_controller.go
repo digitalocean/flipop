@@ -438,6 +438,14 @@ taintLoop:
 	for _, taint := range n.k8sNode.Spec.Taints {
 		for _, tol := range m.match.Tolerations {
 			if tol.ToleratesTaint(&taint) {
+				if (tol.TolerationSeconds != nil && *tol.TolerationSeconds != 0) && taint.TimeAdded != nil {
+					// time the taint was added + toleration seconds = t2
+					// if t2 is after now then we are still in tolartion window
+					// otherwise we should not tolerate this taint any more
+					if !taint.TimeAdded.Add(time.Duration(*tol.TolerationSeconds * int64(time.Second))).After(time.Now()) {
+						return false
+					}
+				}
 				continue taintLoop
 			}
 		}

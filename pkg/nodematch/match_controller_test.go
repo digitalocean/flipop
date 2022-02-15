@@ -25,6 +25,7 @@ import (
 	"github.com/digitalocean/flipop/pkg/log"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
 
 	flipopv1alpha1 "github.com/digitalocean/flipop/pkg/apis/flipop/v1alpha1"
@@ -55,6 +56,11 @@ func (mned *mockNodeEnableDisabler) names() []string {
 }
 
 func TestControllerIsNodeMatch(t *testing.T) {
+	now := time.Now()
+	taintAdded := metav1.NewTime(now.Add(-1 * 5 * time.Minute))
+	dur0 := int64(time.Duration(6 * time.Minute).Seconds())
+	dur1 := int64(time.Duration(4 * time.Minute).Seconds())
+
 	tcs := []struct {
 		name        string
 		node        *corev1.Node
@@ -66,7 +72,7 @@ func TestControllerIsNodeMatch(t *testing.T) {
 			node: kt.MakeNode("", "",
 				kt.SetLabels(kt.MatchingNodeLabels),
 				kt.SetTaints([]corev1.Taint{
-					corev1.Taint{Key: "shields", Value: "down", Effect: corev1.TaintEffectNoExecute},
+					{Key: "shields", Value: "down", Effect: corev1.TaintEffectNoExecute},
 				}),
 				kt.MarkReady,
 			),
@@ -80,7 +86,7 @@ func TestControllerIsNodeMatch(t *testing.T) {
 			name: "bad taint",
 			node: kt.MakeNode("", "",
 				kt.SetTaints([]corev1.Taint{
-					corev1.Taint{Key: "shields", Value: "up", Effect: corev1.TaintEffectNoExecute},
+					{Key: "shields", Value: "up", Effect: corev1.TaintEffectNoExecute},
 				}),
 				kt.MarkReady,
 			),
@@ -104,7 +110,85 @@ func TestControllerIsNodeMatch(t *testing.T) {
 			match:       &flipopv1alpha1.Match{},
 			expectMatch: true,
 		},
+		{
+			name: "match taint with time added and no tolerationSeconds",
+			node: kt.MakeNode("", "",
+				kt.SetTaints([]corev1.Taint{
+					{
+						Key:       "foo",
+						Value:     "bar",
+						Effect:    corev1.TaintEffectNoExecute,
+						TimeAdded: &taintAdded,
+					},
+				}),
+				kt.MarkReady,
+			),
+			match: &flipopv1alpha1.Match{
+				Tolerations: []corev1.Toleration{
+					{
+						Key:      "foo",
+						Value:    "bar",
+						Operator: corev1.TolerationOpEqual,
+						Effect:   corev1.TaintEffectNoExecute,
+					},
+				},
+			},
+			expectMatch: true,
+		},
+		{
+			name: "match taint with time added and tolerationSeconds within window",
+			node: kt.MakeNode("", "",
+				kt.SetTaints([]corev1.Taint{
+					{
+						Key:       "foo",
+						Value:     "bar",
+						Effect:    corev1.TaintEffectNoExecute,
+						TimeAdded: &taintAdded,
+					},
+				}),
+				kt.MarkReady,
+			),
+			match: &flipopv1alpha1.Match{
+				Tolerations: []corev1.Toleration{
+					{
+						Key:               "foo",
+						Value:             "bar",
+						Operator:          corev1.TolerationOpEqual,
+						Effect:            corev1.TaintEffectNoExecute,
+						TolerationSeconds: &dur0,
+					},
+				},
+			},
+			expectMatch: true,
+		},
+		{
+			name: "do not match taint with time added and tolerationSeconds outside window",
+			node: kt.MakeNode("", "",
+				kt.SetTaints([]corev1.Taint{
+					{
+						Key:       "foo",
+						Value:     "bar",
+						Effect:    corev1.TaintEffectNoExecute,
+						TimeAdded: &taintAdded,
+					},
+				}),
+				kt.MarkReady,
+			),
+			match: &flipopv1alpha1.Match{
+				Tolerations: []corev1.Toleration{
+					{
+						Key:               "foo",
+						Value:             "bar",
+						Operator:          corev1.TolerationOpEqual,
+						Effect:            corev1.TaintEffectNoExecute,
+						TolerationSeconds: &dur1,
+					},
+				},
+			},
+			expectMatch: false,
+		},
 	}
+
 	for _, tc := range tcs {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
