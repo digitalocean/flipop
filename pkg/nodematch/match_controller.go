@@ -58,7 +58,7 @@ type event struct {
 	key          string
 	eventType    string
 	resourceType string
-	// object       interface{}
+	object       interface{}
 }
 
 type requeueError struct {
@@ -122,11 +122,10 @@ func (m *Controller) Start(ctx context.Context) {
 
 // Stop terminates execution of the node match controller and waits for it to finish.
 func (m *Controller) Stop() {
-	defer m.queue.ShutDown()
-
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
+		m.queue.ShutDown()
 	}
 	m.wg.Wait()
 }
@@ -180,6 +179,7 @@ func (m *Controller) run() {
 		m.log.Warn("no match criteria set; cannot reconcile")
 		return
 	}
+
 	// This does NOT use shared informers which CAN consume more memory and Kubernetes API
 	// connections, IF there are other consumers which need the same subscription. Since we filter
 	// on labels (and namespace for pod), we would need a shared-informer for each label-set/ns
@@ -240,6 +240,7 @@ func (m *Controller) run() {
 		}
 		return
 	}
+
 	// After the caches are sync'ed we need to loop through nodes again, otherwise pods which were
 	// added before the node was known may be missing.
 	for _, o := range m.nodeInformer.GetStore().List() {
@@ -267,10 +268,14 @@ func (m *Controller) run() {
 	}
 	sort.Sort(byNodeName(enable)) // make this list reproducable
 	m.action.EnableNodes(enable...)
+
 	m.primed = true
 
-	// go is intentional here
-	go wait.Until(m.runWorker, time.Second, m.ctx.Done())
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		wait.Until(m.runWorker, time.Second, m.ctx.Done())
+	}()
 }
 
 func (m *Controller) runWorker() {
@@ -279,11 +284,16 @@ func (m *Controller) runWorker() {
 }
 
 func (m *Controller) processNextItem() bool {
+	m.Lock()
+	defer m.Unlock()
+
 	e, term := m.queue.Get()
 
 	if term {
 		return false
 	}
+
+	defer m.queue.Done(e)
 
 	var re *requeueError
 
@@ -299,9 +309,6 @@ func (m *Controller) processNextItem() bool {
 }
 
 func (m *Controller) processItem(e event) error {
-	m.Lock()
-	defer m.Unlock()
-
 	var obj interface{}
 	var err error
 
@@ -313,6 +320,10 @@ func (m *Controller) processItem(e event) error {
 		}
 
 		n, _ := obj.(*corev1.Node)
+		if n == nil {
+			n, _ = e.object.(*corev1.Node)
+		}
+
 		if n != nil {
 			if e.eventType == "update" || e.eventType == "create" {
 				err = m.updateNode(m.ctx, n)
@@ -328,6 +339,9 @@ func (m *Controller) processItem(e event) error {
 			}
 
 			p, _ := obj.(*corev1.Pod)
+			if p == nil {
+				p, _ = e.object.(*corev1.Pod)
+			}
 			if p != nil {
 				if e.eventType == "update" || e.eventType == "create" {
 					err = m.updatePod(p)
@@ -558,52 +572,20 @@ taintLoop:
 
 // OnAdd implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
 func (m *Controller) OnAdd(obj interface{}) {
-	var event event
-	var err error
-	var rType string
-
-	switch obj.(type) {
-	case *corev1.Node:
-		rType = "node"
-	case *corev1.Pod:
-		rType = "pod"
-	default:
-	}
-
-	event.key, err = cache.MetaNamespaceKeyFunc(obj)
-	event.eventType = "create"
-	event.resourceType = rType
-	if err == nil {
-		m.queue.Add(event)
-	}
+	m.enqueue(obj, "create")
 }
 
 // OnUpdate implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
 func (m *Controller) OnUpdate(_, obj interface{}) {
-	var event event
-	var err error
-	var rType string
-
-	switch obj.(type) {
-	case *corev1.Node:
-		rType = "node"
-	case *corev1.Pod:
-		rType = "pod"
-	default:
-		return
-	}
-
-	event.key, err = cache.MetaNamespaceKeyFunc(obj)
-	event.eventType = "update"
-	event.resourceType = rType
-	// event.object = obj
-	if err == nil {
-		m.queue.Add(event)
-	}
+	m.enqueue(obj, "update")
 }
 
 // OnDelete implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
 func (m *Controller) OnDelete(obj interface{}) {
+	m.enqueue(obj, "delete")
+}
+
+func (m *Controller) enqueue(obj interface{}, eventType string) {
 	var event event
 	var err error
 	var rType string
@@ -618,9 +600,9 @@ func (m *Controller) OnDelete(obj interface{}) {
 	}
 
 	event.key, err = cache.MetaNamespaceKeyFunc(obj)
-	event.eventType = "delete"
+	event.eventType = eventType
 	event.resourceType = rType
-	// event.object = obj
+	event.object = obj
 	if err == nil {
 		m.queue.Add(event)
 	}
