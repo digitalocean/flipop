@@ -184,7 +184,11 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 						require.NoError(t, err)
 					},
 				},
-				{ips: []string{"10.0.0.1"}, cancel: true}},
+				{
+					ips:    []string{"10.0.0.1"},
+					cancel: true,
+				},
+			},
 			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 1` + "\n",
 			expectState:   flipopv1alpha1.NodeDNSRecordActive,
 		},

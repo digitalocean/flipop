@@ -30,10 +30,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	corev1Informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 
 	flipopv1alpha1 "github.com/digitalocean/flipop/pkg/apis/flipop/v1alpha1"
 )
@@ -41,6 +43,7 @@ import (
 const (
 	podResyncPeriod        = 5 * time.Minute
 	nodeResyncPeriod       = 5 * time.Minute
+	defaultRequeueInterval = 5 * time.Minute
 	podNodeNameIndexerName = "podNodeName"
 )
 
@@ -49,6 +52,22 @@ const (
 type NodeEnableDisabler interface {
 	EnableNodes(...*corev1.Node)
 	DisableNodes(...*corev1.Node)
+}
+
+type event struct {
+	key          string
+	eventType    string
+	resourceType string
+	// object       interface{}
+}
+
+type requeueError struct {
+	// requeueAfter if greater than 0, tells the Controller to requeue the reconcile key after the Duration.
+	requeueAfter time.Duration
+}
+
+func (e *requeueError) Error() string {
+	return "requeue error. requeue after: " + e.requeueAfter.String()
 }
 
 // Controller watches Kubernetes nodes and pods and enables or disables them with the provided
@@ -60,6 +79,7 @@ type Controller struct {
 	podSelector  labels.Selector
 
 	nodeNameToNode map[string]*node
+	queue          workqueue.RateLimitingInterface
 
 	log          logrus.FieldLogger
 	kubeCS       kubernetes.Interface
@@ -81,6 +101,7 @@ type Controller struct {
 // NewController builds a new node match Controller.
 func NewController(log logrus.FieldLogger, kubeCS kubernetes.Interface, action NodeEnableDisabler) *Controller {
 	m := &Controller{
+		queue:          workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "nodednsrecordset_controller"),
 		log:            log,
 		kubeCS:         kubeCS,
 		action:         action,
@@ -101,6 +122,8 @@ func (m *Controller) Start(ctx context.Context) {
 
 // Stop terminates execution of the node match controller and waits for it to finish.
 func (m *Controller) Stop() {
+	defer m.queue.ShutDown()
+
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
@@ -138,7 +161,6 @@ func (m *Controller) SetCriteria(match *flipopv1alpha1.Match) {
 		}
 	}
 	m.log.Info("match criteria updated")
-	return
 }
 
 // podNodeNameIndexer implements k8s.io/client-go/tools/cache.Indexer.
@@ -246,6 +268,79 @@ func (m *Controller) run() {
 	sort.Sort(byNodeName(enable)) // make this list reproducable
 	m.action.EnableNodes(enable...)
 	m.primed = true
+
+	// go is intentional here
+	go wait.Until(m.runWorker, time.Second, m.ctx.Done())
+}
+
+func (m *Controller) runWorker() {
+	for m.processNextItem() {
+	}
+}
+
+func (m *Controller) processNextItem() bool {
+	e, term := m.queue.Get()
+
+	if term {
+		return false
+	}
+
+	var re *requeueError
+
+	err := m.processItem(e.(event))
+	if err == nil {
+		m.queue.Forget(e)
+		return true
+	} else if errors.As(err, &re) {
+		m.queue.Forget(e)
+		m.queue.AddAfter(e, re.requeueAfter)
+	}
+	return true
+}
+
+func (m *Controller) processItem(e event) error {
+	m.Lock()
+	defer m.Unlock()
+
+	var obj interface{}
+	var err error
+
+	switch e.resourceType {
+	case "node":
+		obj, _, err = m.nodeInformer.GetIndexer().GetByKey(e.key)
+		if err != nil {
+			return fmt.Errorf("error fetching object with key %s from store: %v", e.key, err)
+		}
+
+		n, _ := obj.(*corev1.Node)
+		if n != nil {
+			if e.eventType == "update" || e.eventType == "create" {
+				err = m.updateNode(m.ctx, n)
+			} else if e.eventType == "delete" {
+				err = m.deleteNode(n)
+			}
+		}
+	case "pod":
+		if m.podIndexer != nil {
+			obj, _, err = m.podIndexer.GetByKey(e.key)
+			if err != nil {
+				return fmt.Errorf("error fetching object with key %s from store: %v", e.key, err)
+			}
+
+			p, _ := obj.(*corev1.Pod)
+			if p != nil {
+				if e.eventType == "update" || e.eventType == "create" {
+					err = m.updatePod(p)
+				} else if e.eventType == "delete" {
+					err = m.deletePod(p)
+				}
+			}
+		}
+	default:
+		m.log.Errorf("informer emitted unexpected type: %T", e.resourceType)
+	}
+
+	return err
 }
 
 func (m *Controller) getNodePods(nodeName string) ([]*corev1.Pod, error) {
@@ -265,10 +360,10 @@ func (m *Controller) getNodePods(nodeName string) ([]*corev1.Pod, error) {
 	return out, nil
 }
 
-func (m *Controller) deleteNode(k8sNode *corev1.Node) {
+func (m *Controller) deleteNode(k8sNode *corev1.Node) error {
 	m.action.DisableNodes(k8sNode)
 	delete(m.nodeNameToNode, k8sNode.Name)
-	return
+	return nil
 }
 
 func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error {
@@ -321,12 +416,17 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 		if m.primed {
 			m.action.EnableNodes(n.k8sNode)
 		}
+
+		if shouldRecheck, dur := n.shouldRecheck(); shouldRecheck && dur > 0 {
+			return &requeueError{requeueAfter: dur}
+		}
 	} else {
 		log.Info("disabling node")
 		n.enabled = false
 		// This should be idempotent, so we don't need to care if we're primed yet.
 		m.action.DisableNodes(n.k8sNode)
 	}
+
 	return nil
 }
 
@@ -404,19 +504,21 @@ func (m *Controller) updatePod(pod *corev1.Pod) error {
 	return nil
 }
 
-func (m *Controller) deletePod(pod *corev1.Pod) {
+func (m *Controller) deletePod(pod *corev1.Pod) error {
 	if pod.Spec.NodeName == "" {
-		return
+		return nil
 	}
 	n, ok := m.nodeNameToNode[pod.Spec.NodeName]
 	if !ok {
-		return
+		return nil
 	}
 	podKey := podNamespacedName(pod)
 	delete(n.matchingPods, podKey)
 	if len(n.matchingPods) == 0 {
 		m.action.DisableNodes(n.k8sNode)
 	}
+
+	return nil
 }
 
 func (m *Controller) isNodeMatch(n *node) bool {
@@ -456,34 +558,71 @@ taintLoop:
 
 // OnAdd implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
 func (m *Controller) OnAdd(obj interface{}) {
-	m.OnUpdate(nil, obj)
+	var event event
+	var err error
+	var rType string
+
+	switch obj.(type) {
+	case *corev1.Node:
+		rType = "node"
+	case *corev1.Pod:
+		rType = "pod"
+	default:
+	}
+
+	event.key, err = cache.MetaNamespaceKeyFunc(obj)
+	event.eventType = "create"
+	event.resourceType = rType
+	if err == nil {
+		m.queue.Add(event)
+	}
 }
 
 // OnUpdate implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
-func (m *Controller) OnUpdate(_, newObj interface{}) {
-	m.Lock()
-	defer m.Unlock()
-	switch r := newObj.(type) {
+func (m *Controller) OnUpdate(_, obj interface{}) {
+	var event event
+	var err error
+	var rType string
+
+	switch obj.(type) {
 	case *corev1.Node:
-		m.updateNode(m.ctx, r)
+		rType = "node"
 	case *corev1.Pod:
-		m.updatePod(r)
+		rType = "pod"
 	default:
-		m.log.Errorf("informer emitted unexpected type: %T", newObj)
+		return
+	}
+
+	event.key, err = cache.MetaNamespaceKeyFunc(obj)
+	event.eventType = "update"
+	event.resourceType = rType
+	// event.object = obj
+	if err == nil {
+		m.queue.Add(event)
 	}
 }
 
 // OnDelete implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
 func (m *Controller) OnDelete(obj interface{}) {
-	m.Lock()
-	defer m.Unlock()
-	switch r := obj.(type) {
+	var event event
+	var err error
+	var rType string
+
+	switch obj.(type) {
 	case *corev1.Node:
-		m.deleteNode(r)
+		rType = "node"
 	case *corev1.Pod:
-		m.deletePod(r)
+		rType = "pod"
 	default:
-		m.log.Errorf("informer emitted unexpected type: %T", obj)
+		return
+	}
+
+	event.key, err = cache.MetaNamespaceKeyFunc(obj)
+	event.eventType = "delete"
+	event.resourceType = rType
+	// event.object = obj
+	if err == nil {
+		m.queue.Add(event)
 	}
 }
 
@@ -507,6 +646,16 @@ func (n *node) getName() string {
 
 func (n *node) getProviderID() string {
 	return n.k8sNode.Spec.ProviderID
+}
+
+func (n *node) shouldRecheck() (bool, time.Duration) {
+	for _, taint := range n.k8sNode.Spec.Taints {
+		if taint.TimeAdded != nil {
+			return true, defaultRequeueInterval
+		}
+	}
+
+	return false, 0
 }
 
 func podNamespacedName(pod *corev1.Pod) string {
