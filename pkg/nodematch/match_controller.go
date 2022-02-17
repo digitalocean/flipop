@@ -45,6 +45,10 @@ const (
 	nodeResyncPeriod       = 5 * time.Minute
 	defaultRequeueInterval = 5 * time.Minute
 	podNodeNameIndexerName = "podNodeName"
+
+	eventTypeCreate = "create"
+	eventTypeUpdate = "update"
+	eventTypeDelete = "delete"
 )
 
 // NodeEnableDisabler describes a controller which can enable or disable sets of nodes, based
@@ -304,7 +308,10 @@ func (m *Controller) processNextItem() bool {
 	} else if errors.As(err, &re) {
 		m.queue.Forget(e)
 		m.queue.AddAfter(e, re.requeueAfter)
+	} else {
+		m.log.Error(err.Error())
 	}
+
 	return true
 }
 
@@ -325,31 +332,34 @@ func (m *Controller) processItem(e event) error {
 		}
 
 		if n != nil {
-			if e.eventType == "update" || e.eventType == "create" {
+			if e.eventType == eventTypeUpdate || e.eventType == eventTypeCreate {
 				err = m.updateNode(m.ctx, n)
-			} else if e.eventType == "delete" {
+			} else if e.eventType == eventTypeDelete {
 				err = m.deleteNode(n)
 			}
 		}
 	case "pod":
+		var p *corev1.Pod
 		if m.podIndexer != nil {
 			obj, _, err = m.podIndexer.GetByKey(e.key)
 			if err != nil {
 				return fmt.Errorf("error fetching object with key %s from store: %v", e.key, err)
 			}
 
-			p, _ := obj.(*corev1.Pod)
-			if p == nil {
-				p, _ = e.object.(*corev1.Pod)
-			}
-			if p != nil {
-				if e.eventType == "update" || e.eventType == "create" {
-					err = m.updatePod(p)
-				} else if e.eventType == "delete" {
-					err = m.deletePod(p)
-				}
+			p, _ = obj.(*corev1.Pod)
+		}
+
+		if p == nil {
+			p, _ = e.object.(*corev1.Pod)
+		}
+		if p != nil {
+			if e.eventType == eventTypeUpdate || e.eventType == eventTypeCreate {
+				err = m.updatePod(p)
+			} else if e.eventType == eventTypeDelete {
+				err = m.deletePod(p)
 			}
 		}
+
 	default:
 		m.log.Errorf("informer emitted unexpected type: %T", e.resourceType)
 	}
@@ -572,17 +582,17 @@ taintLoop:
 
 // OnAdd implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
 func (m *Controller) OnAdd(obj interface{}) {
-	m.enqueue(obj, "create")
+	m.enqueue(obj, eventTypeCreate)
 }
 
 // OnUpdate implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
 func (m *Controller) OnUpdate(_, obj interface{}) {
-	m.enqueue(obj, "update")
+	m.enqueue(obj, eventTypeUpdate)
 }
 
 // OnDelete implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
 func (m *Controller) OnDelete(obj interface{}) {
-	m.enqueue(obj, "delete")
+	m.enqueue(obj, eventTypeDelete)
 }
 
 func (m *Controller) enqueue(obj interface{}, eventType string) {
