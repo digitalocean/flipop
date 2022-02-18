@@ -61,6 +61,7 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 			Match: flipopv1alpha1.Match{NodeLabel: "system=wolf359"},
 		},
 	}
+
 	type setDNSCall struct {
 		ips        []string
 		err        error
@@ -71,8 +72,8 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 	}
 	tcs := []struct {
 		name             string
-		resource         *flipopv1alpha1.NodeDNSRecordSet
-		initialObjs      []metav1.Object
+		resource         func() *flipopv1alpha1.NodeDNSRecordSet
+		initialObjs      func() []metav1.Object
 		expectSetDNSCall []setDNSCall
 		expectError      string
 		expectMetrics    string
@@ -80,14 +81,16 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 	}{
 		{
 			name:     "happy path",
-			resource: nodeDNS,
-			initialObjs: []metav1.Object{
-				kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
-				kt.MakeNode("kyushu", "mock://2", kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.2")), // not ready, not matching
-				kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
+			resource: func() *flipopv1alpha1.NodeDNSRecordSet { return nodeDNS },
+			initialObjs: func() []metav1.Object {
+				return []metav1.Object{
+					kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+					kt.MakeNode("kyushu", "mock://2", kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.2")), // not ready, not matching
+					kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
+				}
 			},
 			expectSetDNSCall: []setDNSCall{{ips: []string{"10.0.0.1", "10.0.0.3"}, cancel: true}},
 			expectMetrics:    `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 2` + "\n",
@@ -95,10 +98,12 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		},
 		{
 			name:     "retry",
-			resource: nodeDNS,
-			initialObjs: []metav1.Object{
-				kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+			resource: func() *flipopv1alpha1.NodeDNSRecordSet { return nodeDNS },
+			initialObjs: func() []metav1.Object {
+				return []metav1.Object{
+					kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+				}
 			},
 			expectSetDNSCall: []setDNSCall{
 				{
@@ -112,10 +117,12 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		},
 		{
 			name:     "update error",
-			resource: nodeDNS,
-			initialObjs: []metav1.Object{
-				kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+			resource: func() *flipopv1alpha1.NodeDNSRecordSet { return nodeDNS },
+			initialObjs: func() []metav1.Object {
+				return []metav1.Object{
+					kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+				}
 			},
 			expectSetDNSCall: []setDNSCall{
 				{
@@ -129,28 +136,32 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		},
 		{
 			name: "invalid",
-			resource: &flipopv1alpha1.NodeDNSRecordSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "next-generation",
-					Namespace: "default",
-					UID:       uuid.NewUUID(),
-				},
-				Spec: flipopv1alpha1.NodeDNSRecordSetSpec{
-					Match: flipopv1alpha1.Match{NodeLabel: "system=wolf359"},
-					DNSRecordSet: flipopv1alpha1.DNSRecordSet{
-						Provider: provider.Mock,
+			resource: func() *flipopv1alpha1.NodeDNSRecordSet {
+				return &flipopv1alpha1.NodeDNSRecordSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "next-generation",
+						Namespace: "default",
+						UID:       uuid.NewUUID(),
 					},
-				},
+					Spec: flipopv1alpha1.NodeDNSRecordSetSpec{
+						Match: flipopv1alpha1.Match{NodeLabel: "system=wolf359"},
+						DNSRecordSet: flipopv1alpha1.DNSRecordSet{
+							Provider: provider.Mock,
+						},
+					},
+				}
 			},
 			expectError: "invalid dnsRecordSet specification",
 			expectState: flipopv1alpha1.NodeDNSRecordError,
 		},
 		{
 			name:     "invalid update",
-			resource: nodeDNS,
-			initialObjs: []metav1.Object{
-				kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+			resource: func() *flipopv1alpha1.NodeDNSRecordSet { return nodeDNS },
+			initialObjs: func() []metav1.Object {
+				return []metav1.Object{
+					kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+				}
 			},
 			expectSetDNSCall: []setDNSCall{
 				{
@@ -169,12 +180,14 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		},
 		{
 			name:     "node no-longer matches",
-			resource: nodeDNS,
-			initialObjs: []metav1.Object{
-				kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
-				kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
+			resource: func() *flipopv1alpha1.NodeDNSRecordSet { return nodeDNS },
+			initialObjs: func() []metav1.Object {
+				return []metav1.Object{
+					kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+					kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
+				}
 			},
 			expectSetDNSCall: []setDNSCall{
 				{ // Initial sync is complete, delete a node and watch for update.
@@ -194,10 +207,12 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		},
 		{
 			name:     "new node matches",
-			resource: nodeDNS,
-			initialObjs: []metav1.Object{
-				kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+			resource: func() *flipopv1alpha1.NodeDNSRecordSet { return nodeDNS },
+			initialObjs: func() []metav1.Object {
+				return []metav1.Object{
+					kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+				}
 			},
 			expectSetDNSCall: []setDNSCall{
 				{ // Initial sync is complete, add another node to make sure updates work.
@@ -215,15 +230,17 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		},
 		{
 			name:     "match updated",
-			resource: nodeDNS,
-			initialObjs: []metav1.Object{
-				kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
-				// kyushu doesn't have labels, won't initially match, but will after update.
-				kt.MakeNode("kyushu", "mock://2", kt.MarkReady,
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.2")),
-				kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
+			resource: func() *flipopv1alpha1.NodeDNSRecordSet { return nodeDNS },
+			initialObjs: func() []metav1.Object {
+				return []metav1.Object{
+					kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+					// kyushu doesn't have labels, won't initially match, but will after update.
+					kt.MakeNode("kyushu", "mock://2", kt.MarkReady,
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.2")),
+					kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
+				}
 			},
 			expectSetDNSCall: []setDNSCall{
 				{
@@ -243,12 +260,14 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 		},
 		{
 			name:     "target updated",
-			resource: nodeDNS,
-			initialObjs: []metav1.Object{
-				kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
-				kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
-					kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
+			resource: func() *flipopv1alpha1.NodeDNSRecordSet { return nodeDNS },
+			initialObjs: func() []metav1.Object {
+				return []metav1.Object{
+					kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+					kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
+				}
 			},
 			expectSetDNSCall: []setDNSCall{
 				{
@@ -272,31 +291,162 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 			expectMetrics: `flipop_nodednsrecordset_records{dns="ingress.argolis.cluster",name="next-generation",namespace="default",provider="mock"} 2` + "\n",
 			expectState:   flipopv1alpha1.NodeDNSRecordActive,
 		},
+		{
+			name: "node no longer matches toleration duration",
+			resource: func() *flipopv1alpha1.NodeDNSRecordSet {
+				dur1m := int64(time.Duration(1 * time.Minute).Seconds())
+
+				return &flipopv1alpha1.NodeDNSRecordSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "next-generation",
+						Namespace: "default",
+						UID:       uuid.NewUUID(),
+					},
+					Spec: flipopv1alpha1.NodeDNSRecordSetSpec{
+						DNSRecordSet: kt.MakeDNS(),
+						// Simple match only cares about nodes. nodematch.Controller is well tested elsewhere.
+						Match: flipopv1alpha1.Match{
+							NodeLabel: "system=wolf359",
+							Tolerations: []corev1.Toleration{
+								{
+									Key:               "foo",
+									Value:             "bar",
+									Operator:          corev1.TolerationOpEqual,
+									Effect:            corev1.TaintEffectNoExecute,
+									TolerationSeconds: &dur1m,
+								},
+							},
+						},
+					},
+				}
+			},
+			initialObjs: func() []metav1.Object {
+				taintAdded := metav1.NewTime(time.Now().Add(-1 * 50 * time.Second))
+
+				return []metav1.Object{
+					kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels), kt.SetTaints([]corev1.Taint{
+						{
+							Key:       "foo",
+							Value:     "bar",
+							Effect:    corev1.TaintEffectNoExecute,
+							TimeAdded: &taintAdded,
+						},
+					}),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+					kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
+				}
+			},
+			expectSetDNSCall: []setDNSCall{
+				{ // Initial sync is complete, delete a node and watch for update.
+					ips: []string{"10.0.0.1", "10.0.0.3"},
+					exec: func(c *Controller) {
+						time.Sleep(20 * time.Second)
+					},
+				},
+				{
+					ips:    []string{"10.0.0.3"},
+					cancel: true,
+				},
+			},
+			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 1` + "\n",
+			expectState:   flipopv1alpha1.NodeDNSRecordActive,
+		},
+		{
+			name: "node matches after requeue",
+			resource: func() *flipopv1alpha1.NodeDNSRecordSet {
+				dur1m := int64(time.Duration(1 * time.Minute).Seconds())
+
+				return &flipopv1alpha1.NodeDNSRecordSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "next-generation",
+						Namespace: "default",
+						UID:       uuid.NewUUID(),
+					},
+					Spec: flipopv1alpha1.NodeDNSRecordSetSpec{
+						DNSRecordSet: kt.MakeDNS(),
+						// Simple match only cares about nodes. nodematch.Controller is well tested elsewhere.
+						Match: flipopv1alpha1.Match{
+							NodeLabel: "system=wolf359",
+							Tolerations: []corev1.Toleration{
+								{
+									Key:               "foo",
+									Value:             "bar",
+									Operator:          corev1.TolerationOpEqual,
+									Effect:            corev1.TaintEffectNoExecute,
+									TolerationSeconds: &dur1m,
+								},
+							},
+						},
+					},
+				}
+			},
+			initialObjs: func() []metav1.Object {
+				taintAdded := metav1.NewTime(time.Now().Add(-1 * 50 * time.Second))
+
+				return []metav1.Object{
+					kt.MakeNode("melbourne", "mock://1", kt.MarkReady, kt.SetLabels(nodeLabels), kt.SetTaints([]corev1.Taint{
+						{
+							Key:       "foo",
+							Value:     "bar",
+							Effect:    corev1.TaintEffectNoExecute,
+							TimeAdded: &taintAdded,
+						},
+					}),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.1")),
+					kt.MakeNode("saratoga", "mock://3", kt.MarkReady, kt.SetLabels(nodeLabels),
+						kt.SetNodeAddress(corev1.NodeExternalIP, "10.0.0.3")),
+				}
+			},
+			expectSetDNSCall: []setDNSCall{
+				{ // Initial sync is complete, delete a node and watch for update.
+					ips: []string{"10.0.0.1", "10.0.0.3"},
+					exec: func(c *Controller) {
+						node, err := c.kubeCS.CoreV1().Nodes().Get(context.TODO(), "melbourne", metav1.GetOptions{})
+						require.NoError(t, err)
+
+						node.Spec.Taints = []corev1.Taint{}
+						_, err = c.kubeCS.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
+						require.NoError(t, err)
+
+						time.Sleep(20 * time.Second)
+					},
+				},
+			},
+			expectMetrics: `flipop_nodednsrecordset_records{dns="nodes.example.com",name="next-generation",namespace="default",provider="mock"} 1` + "\n",
+			expectState:   flipopv1alpha1.NodeDNSRecordActive,
+		},
 	}
+
 	for _, tc := range tcs {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
 			log := log.NewTestLogger(t)
+
+			var initialObjs []metav1.Object
+			if tc.initialObjs != nil {
+				initialObjs = tc.initialObjs()
+			}
+
 			c := &Controller{
-				kubeCS:        kubeCSFake.NewSimpleClientset(kt.AsRuntimeObjects(tc.initialObjs)...),
-				flipopCS:      flipCSFake.NewSimpleClientset(tc.resource),
+				kubeCS:        kubeCSFake.NewSimpleClientset(kt.AsRuntimeObjects(initialObjs)...),
+				flipopCS:      flipCSFake.NewSimpleClientset(tc.resource()),
 				children:      make(map[kubetypes.UID]*dnsEnablerDisabler),
 				ctx:           ctx,
 				log:           log,
 				metricRecords: prometheus.NewGaugeVec(recordsOpts, recordsLabels),
 			}
+
 			c.providers = provider.NewRegistry(
 				provider.WithProvider(&provider.MockProvider{MockDNSProvider: &provider.MockDNSProvider{
 					EnsureDNSARecordSetFunc: func(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
 						require.NotEmpty(t, tc.expectSetDNSCall, "unexpected call to EnsureDNSARecordSet")
 						expected := tc.expectSetDNSCall[0]
+
 						tc.expectSetDNSCall = tc.expectSetDNSCall[1:]
-						if expected.cancel {
-							cancel() // this is the last expected call
-						}
 						require.ElementsMatch(t, expected.ips, ips)
 						if expected.zone != "" {
 							require.Equal(t, expected.zone, zone)
@@ -312,6 +462,11 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 						if expected.exec != nil {
 							expected.exec(c)
 						}
+
+						if expected.cancel {
+							cancel() // this is the last expected call
+						}
+
 						return expected.err
 					},
 					RecordNameAndZoneToFQDNFunc: func(zone, recordName string) string {

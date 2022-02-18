@@ -63,6 +63,8 @@ type event struct {
 	eventType    string
 	resourceType string
 	object       interface{}
+	requeued     bool
+	requeuedAt   time.Time
 }
 
 type requeueError struct {
@@ -307,7 +309,12 @@ func (m *Controller) processNextItem() bool {
 		return true
 	} else if errors.As(err, &re) {
 		m.queue.Forget(e)
-		m.queue.AddAfter(e, re.requeueAfter)
+
+		if ev, ok := e.(event); ok {
+			ev.requeued = true
+			ev.requeuedAt = time.Now()
+			m.queue.AddAfter(e, re.requeueAfter)
+		}
 	} else {
 		m.log.Error(err.Error())
 	}
@@ -327,7 +334,14 @@ func (m *Controller) processItem(e event) error {
 		}
 
 		n, _ := obj.(*corev1.Node)
-		if n == nil {
+
+		// we only want the stored even object if it's missing and not requeued
+		// usually this should be a deleted object that's been removed from the index
+		// so lets handle it properly
+		// if it was requeued and it's missing we probably should not handle it
+		// example we requeued toleration check but in the mean time the node has been removed
+		// we will handle the delete event properly so we really should not handle the requeued event
+		if n == nil && !e.requeued {
 			n, _ = e.object.(*corev1.Node)
 		}
 
@@ -349,9 +363,11 @@ func (m *Controller) processItem(e event) error {
 			p, _ = obj.(*corev1.Pod)
 		}
 
-		if p == nil {
+		// see comment above
+		if p == nil && !e.requeued {
 			p, _ = e.object.(*corev1.Pod)
 		}
+
 		if p != nil {
 			if e.eventType == eventTypeUpdate || e.eventType == eventTypeCreate {
 				err = m.updatePod(p)
@@ -441,7 +457,8 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 			m.action.EnableNodes(n.k8sNode)
 		}
 
-		if shouldRecheck, dur := n.shouldRecheck(); shouldRecheck && dur > 0 {
+		if shouldRecheck, dur := m.shouldRecheck(n); shouldRecheck && dur > 0 {
+			log.Infof("requeue node %s for %+v s", n.getName(), dur.Seconds())
 			return &requeueError{requeueAfter: dur}
 		}
 	} else {
@@ -580,6 +597,28 @@ taintLoop:
 	return true
 }
 
+func (m *Controller) shouldRecheck(n *node) (bool, time.Duration) {
+	minDuration := defaultRequeueInterval
+	recheck := false
+
+	for _, taint := range n.k8sNode.Spec.Taints {
+		for _, tol := range m.match.Tolerations {
+			if tol.ToleratesTaint(&taint) {
+				if (tol.TolerationSeconds != nil && *tol.TolerationSeconds != 0) && taint.TimeAdded != nil {
+
+					now := time.Now()
+					t := taint.TimeAdded.Add(time.Duration(*tol.TolerationSeconds * int64(time.Second)))
+					if t.After(now) {
+						recheck = true
+					}
+				}
+			}
+		}
+	}
+
+	return recheck, minDuration
+}
+
 // OnAdd implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
 func (m *Controller) OnAdd(obj interface{}) {
 	m.enqueue(obj, eventTypeCreate)
@@ -613,6 +652,7 @@ func (m *Controller) enqueue(obj interface{}, eventType string) {
 	event.eventType = eventType
 	event.resourceType = rType
 	event.object = obj
+
 	if err == nil {
 		m.queue.Add(event)
 	}
@@ -638,16 +678,6 @@ func (n *node) getName() string {
 
 func (n *node) getProviderID() string {
 	return n.k8sNode.Spec.ProviderID
-}
-
-func (n *node) shouldRecheck() (bool, time.Duration) {
-	for _, taint := range n.k8sNode.Spec.Taints {
-		if taint.TimeAdded != nil {
-			return true, defaultRequeueInterval
-		}
-	}
-
-	return false, 0
 }
 
 func podNamespacedName(pod *corev1.Pod) string {
