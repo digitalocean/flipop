@@ -341,6 +341,9 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 				{ // Initial sync is complete, delete a node and watch for update.
 					ips: []string{"10.0.0.1", "10.0.0.3"},
 					exec: func(c *Controller) {
+						// taint was added 50 s ago
+						// toleration duration is 1 m
+						// wait 20 s
 						time.Sleep(20 * time.Second)
 					},
 				},
@@ -405,10 +408,14 @@ func TestNodeDNSRecordSetController(t *testing.T) {
 						node, err := c.kubeCS.CoreV1().Nodes().Get(context.TODO(), "melbourne", metav1.GetOptions{})
 						require.NoError(t, err)
 
+						// remove taint
 						node.Spec.Taints = []corev1.Taint{}
 						_, err = c.kubeCS.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
 						require.NoError(t, err)
 
+						// taint was added 50 s ago
+						// toleration duration is 1 m
+						// wait 20 s
 						time.Sleep(20 * time.Second)
 					},
 				},

@@ -328,6 +328,31 @@ func (m *Controller) processItem(e event) error {
 
 	switch e.resourceType {
 	case "node":
+
+		if e.requeued {
+			// TODO(bdjurkovic) is this correct?
+
+			// if requeued we really should make sure we have the latest most current version of the object
+			// unfortunately there is no way to check when resyc was last done to check if we resynced since
+			// we got requeued
+			// so we are forced to, ahem, force a cache sync
+			err := m.nodeInformer.GetStore().Resync()
+			if err != nil {
+				return err
+			}
+
+			if !cache.WaitForCacheSync(m.ctx.Done(), m.nodeInformer.HasSynced) {
+				if m.ctx.Err() != nil {
+					// We don't know why the context was canceled, but this can be a normal error if the
+					// FloatingIPPool spec changed during initialization.
+					m.log.WithError(m.ctx.Err()).Error("failed to sync dependencies; maybe spec changed")
+				} else {
+					m.log.Error("failed to sync dependencies")
+				}
+				return m.ctx.Err()
+			}
+		}
+
 		obj, _, err = m.nodeInformer.GetIndexer().GetByKey(e.key)
 		if err != nil {
 			return fmt.Errorf("error fetching object with key %s from store: %v", e.key, err)
@@ -335,7 +360,7 @@ func (m *Controller) processItem(e event) error {
 
 		n, _ := obj.(*corev1.Node)
 
-		// we only want the stored even object if it's missing and not requeued
+		// we only want the stored event object if it's missing and not requeued
 		// usually this should be a deleted object that's been removed from the index
 		// so lets handle it properly
 		// if it was requeued and it's missing we probably should not handle it
@@ -600,16 +625,25 @@ taintLoop:
 func (m *Controller) shouldRecheck(n *node) (bool, time.Duration) {
 	minDuration := defaultRequeueInterval
 	recheck := false
+	now := time.Now()
 
 	for _, taint := range n.k8sNode.Spec.Taints {
 		for _, tol := range m.match.Tolerations {
 			if tol.ToleratesTaint(&taint) {
 				if (tol.TolerationSeconds != nil && *tol.TolerationSeconds != 0) && taint.TimeAdded != nil {
 
-					now := time.Now()
-					t := taint.TimeAdded.Add(time.Duration(*tol.TolerationSeconds * int64(time.Second)))
-					if t.After(now) {
+					ta := taint.TimeAdded
+					// tilaration duration + time when taint is added is the window when we tolarete taint
+					// if that window ends after now we need to recheck
+					te := ta.Add(time.Duration(*tol.TolerationSeconds * int64(time.Second)))
+					if te.After(now) {
 						recheck = true
+
+						// if the window ends before now + minDuration
+						// means its a new min duration
+						if te.Before(now.Add(minDuration)) {
+							minDuration = te.Sub(now)
+						}
 					}
 				}
 			}
