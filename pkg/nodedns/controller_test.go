@@ -360,7 +360,7 @@ func renderMetrics(c prometheus.Collector) (string, error) {
 		return "", err
 	}
 	var rendered bytes.Buffer
-	encoder := expfmt.NewEncoder(&rendered, expfmt.FmtText)
+	encoder := expfmt.NewEncoder(&rendered, expfmt.NewFormat(expfmt.TypeTextPlain))
 families:
 	for _, f := range metrics {
 		var v float64

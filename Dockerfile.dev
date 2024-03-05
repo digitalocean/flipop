@@ -1,4 +1,4 @@
-ARG GO_IMAGE=docker.io/golang:1.13-buster
+ARG GO_IMAGE=golang:1.22
 
 FROM ${GO_IMAGE}
 
@@ -10,7 +10,7 @@ COPY . /go/src/github.com/digitalocean/flipop
 RUN go mod download
 
 # k8s.io/code-generator 
-RUN cd /go && \
-  (GO111MODULE=off go get k8s.io/code-generator || true) && \
-  cd /go/src/k8s.io/code-generator && \
-  git checkout v0.20.5
+# Note: This is kept at a rather old version for now to keep diffs small.
+RUN mkdir -p /go/src/k8s.io && \
+  cd /go/src/k8s.io && \
+  git clone --depth 1 --branch v0.20.5 https://github.com/kubernetes/code-generator.git

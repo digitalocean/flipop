@@ -34,7 +34,7 @@ import (
 
 func TestCloudflareEnsureDNSARecordSet(t *testing.T) {
 	const (
-		name = "NAME"
+		name = "name"
 		zone = "ZONE"
 	)
 	tcs := []struct {

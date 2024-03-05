@@ -107,14 +107,14 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 	for _, ip := range ips {
 		ipSet[ip] = struct{}{}
 	}
-	existing, err := c.api.DNSRecords(ctx, zone, cloudflare.DNSRecord{
+	existing, _, err := c.api.ListDNSRecords(ctx, cloudflare.ZoneIdentifier(zone), cloudflare.ListDNSRecordsParams{
 		Name: recordName,
 		Type: dnsRecordTypeA,
 	})
 	if err != nil {
 		return fmt.Errorf("fetching existing cloudflare dns records: %w", err)
 	}
-	recordTemplate := cloudflare.DNSRecord{
+	recordTemplate := cloudflare.CreateDNSRecordParams{
 		Type: dnsRecordTypeA,
 		Name: recordName,
 		TTL:  ttl,
@@ -123,11 +123,16 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 		_, ok := ipSet[record.Content]
 		if ok {
 			if record.TTL != ttl || (record.Proxied != nil && *record.Proxied) {
-				update := recordTemplate
-				update.Content = record.Content
-				update.ID = record.ID
+				update := cloudflare.UpdateDNSRecordParams{
+					ID:      record.ID,
+					Content: record.Content,
+
+					Type: recordTemplate.Type,
+					Name: recordTemplate.Name,
+					TTL:  recordTemplate.TTL,
+				}
 				log.WithField("record_id", record.ID).Debug("updating record")
-				err := c.api.UpdateDNSRecord(ctx, zone, record.ID, update)
+				_, err := c.api.UpdateDNSRecord(ctx, cloudflare.ZoneIdentifier(zone), update)
 				if err != nil {
 					return c.toRetryError(fmt.Errorf("updating record: %w", err))
 				}
@@ -140,18 +145,25 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 
 	// Update/Create records for any IPs without records.
 	for ip := range ipSet {
-		update := recordTemplate
-		update.Content = ip
 		if len(toDelete) > 0 {
+			update := cloudflare.UpdateDNSRecordParams{
+				ID:      toDelete[0],
+				Content: ip,
+
+				Type: recordTemplate.Type,
+				Name: recordTemplate.Name,
+				TTL:  recordTemplate.TTL,
+			}
 			log.WithFields(logrus.Fields{"record_id": toDelete[0], "ip": ip}).Debug("updating record target")
-			err := c.api.UpdateDNSRecord(ctx, zone, toDelete[0], update)
+			_, err := c.api.UpdateDNSRecord(ctx, cloudflare.ZoneIdentifier(zone), update)
 			if err != nil {
 				return c.toRetryError(fmt.Errorf("updating record: %w", err))
 			}
 			toDelete = toDelete[1:]
 		} else {
+			recordTemplate.Content = ip
 			log.WithField("ip", ip).Debug("creating new record")
-			_, err := c.api.CreateDNSRecord(ctx, zone, update)
+			_, err := c.api.CreateDNSRecord(ctx, cloudflare.ZoneIdentifier(zone), recordTemplate)
 			if err != nil {
 				return c.toRetryError(fmt.Errorf("creating record: %w", err))
 			}
@@ -161,7 +173,7 @@ func (c *cloudflareDNS) EnsureDNSARecordSet(ctx context.Context, zone, recordNam
 	// Clear any unneeded records.
 	for _, id := range toDelete {
 		log.WithField("record_id", id).Debug("deleting unneeded record")
-		err := c.api.DeleteDNSRecord(ctx, zone, id)
+		err := c.api.DeleteDNSRecord(ctx, cloudflare.ZoneIdentifier(zone), id)
 		if err != nil {
 			return c.toRetryError(fmt.Errorf("deleting record: %w", err))
 		}
