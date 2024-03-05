@@ -116,7 +116,7 @@ func (c *Controller) Run(ctx context.Context) {
 }
 
 // OnAdd implements the shared informer ResourceEventHandler for FloatingIPPools.
-func (c *Controller) OnAdd(obj interface{}) {
+func (c *Controller) OnAdd(obj interface{}, _ bool) {
 	k8sPool, ok := obj.(*flipopv1alpha1.FloatingIPPool)
 	if !ok {
 		c.log.WithField("unexpected_type", fmt.Sprintf("%T", obj)).Warn("unexpected type")

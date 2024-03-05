@@ -447,7 +447,7 @@ taintLoop:
 }
 
 // OnAdd implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
-func (m *Controller) OnAdd(obj interface{}) {
+func (m *Controller) OnAdd(obj interface{}, _ bool) {
 	m.OnUpdate(nil, obj)
 }
 

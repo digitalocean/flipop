@@ -111,7 +111,7 @@ func (c *Controller) Run(ctx context.Context) {
 }
 
 // OnAdd implements the shared informer ResourceEventHandler for NodeDNSRecordSets.
-func (c *Controller) OnAdd(obj interface{}) {
+func (c *Controller) OnAdd(obj interface{}, _ bool) {
 	nrs, ok := obj.(*flipopv1alpha1.NodeDNSRecordSet)
 	if !ok {
 		c.log.WithField("unexpected_type", fmt.Sprintf("%T", obj)).Warn("unexpected type")

@@ -68,9 +68,7 @@ func LeaderElection(
 	id := fmt.Sprintf("%s_%s", hostname, string(uuid.NewUUID()))
 
 	rl, err := resourcelock.New(
-		// Use resourcelock.EndpointsLeasesResourceLock once
-		// https://github.com/kubernetes/kubernetes/pull/88192 is addressed
-		resourcelock.ConfigMapsResourceLock,
+		resourcelock.LeasesResourceLock,
 		namespace,
 		resourceName,
 		client.CoreV1(),

@@ -301,8 +301,8 @@ flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",na
 			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.Match.PodLabel = "#invalid#"
 			},
-			expectError: "Error parsing pod selector: unable to parse requirement: " +
-				"invalid label key \"#invalid#\": name part must consist of alphanumeric characters, " +
+			expectError: "Error parsing pod selector: unable to parse requirement: <nil>: " +
+				"Invalid value: \"#invalid#\": name part must consist of alphanumeric characters, " +
 				"'-', '_' or '.', and must start and end with an alphanumeric character " +
 				"(e.g. 'MyName',  or 'my.name',  or '123-abc', regex used for validation is '([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]')",
 		},
@@ -312,8 +312,8 @@ flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",na
 			manip: func(f *flipopv1alpha1.FloatingIPPool, c *Controller) {
 				f.Spec.Match.NodeLabel = "#invalid#"
 			},
-			expectError: "Error parsing node selector: unable to parse requirement: " +
-				"invalid label key \"#invalid#\": name part must consist of alphanumeric characters, " +
+			expectError: "Error parsing node selector: unable to parse requirement: <nil>: " +
+				"Invalid value: \"#invalid#\": name part must consist of alphanumeric characters, " +
 				"'-', '_' or '.', and must start and end with an alphanumeric character " +
 				"(e.g. 'MyName',  or 'my.name',  or '123-abc', regex used for validation is '([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]')",
 		},
@@ -514,8 +514,9 @@ func renderMetrics(c prometheus.Collector) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	var rendered bytes.Buffer
-	encoder := expfmt.NewEncoder(&rendered, expfmt.FmtText)
+	encoder := expfmt.NewEncoder(&rendered, expfmt.NewFormat(expfmt.TypeTextPlain))
 families:
 	for _, f := range metrics {
 		var v float64
