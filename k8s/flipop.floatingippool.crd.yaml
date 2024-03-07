@@ -101,4 +101,3 @@ spec:
     listKind: FloatingIPPoolList
     plural: floatingippools
     singular: floatingippool
-    shortNames: []
