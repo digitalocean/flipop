@@ -748,7 +748,7 @@ func newOrderedSet() *orderedSet {
 }
 
 // Add v to the s, if it doesn't already exist. If front is true it will be
-// added/moved to the front, otherwise its added to the end.
+// added/moved to the front, otherwise it's added to the end.
 func (o *orderedSet) Add(v string, front bool) {
 	e, ok := o.m[v]
 	if ok {
