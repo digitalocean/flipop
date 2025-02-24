@@ -223,7 +223,7 @@ flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",na
 			expectIPState: map[flipopv1alpha1.IPState]int{
 				flipopv1alpha1.IPStateUnassigned: 2,
 			},
-			expectSetDNSCalls: 1,
+			expectSetDNSCalls: 0,
 			expectMetrics: `flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="172.16.2.2",name="deep-space-nine",namespace="",provider="mock",state="unassigned"} 1
 flipop_floatingippoolcontroller_ip_state{dns="deep-space-nine.example.com",ip="192.168.1.1",name="deep-space-nine",namespace="",provider="mock",state="unassigned"} 1
 `,
@@ -392,10 +392,7 @@ flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",na
 					},
 					MockDNSProvider: &provider.MockDNSProvider{
 						EnsureDNSARecordSetFunc: func(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
-							desired := k8s.Spec.DesiredIPs
-							if desired == 0 {
-								desired = len(k8s.Spec.IPs)
-							}
+							desired := tc.expectIPState[flipopv1alpha1.IPStateActive]
 							assert.Len(t, ips, desired)
 							assert.Equal(t, k8s.Spec.DNSRecordSet.Zone, zone)
 							assert.Equal(t, k8s.Spec.DNSRecordSet.RecordName, recordName)
