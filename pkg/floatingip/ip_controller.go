@@ -590,7 +590,13 @@ func (i *ipController) reconcileDNS(ctx context.Context) {
 		return
 	}
 	i.log.WithField("ips", i.ips).Info("updating dns")
-	err := i.dnsProvider.EnsureDNSARecordSet(ctx, i.dns.Zone, i.dns.RecordName, i.ips, i.dns.TTL)
+	var assignedIPs []string
+	for _, ip := range i.ips {
+		if i.ipToStatus[ip].state == flipopv1alpha1.IPStateActive {
+			assignedIPs = append(assignedIPs, ip)
+		}
+	}
+	err := i.dnsProvider.EnsureDNSARecordSet(ctx, i.dns.Zone, i.dns.RecordName, assignedIPs, i.dns.TTL)
 	if err != nil {
 		i.log.WithError(err).Error("setting DNSRecordSet")
 		return
