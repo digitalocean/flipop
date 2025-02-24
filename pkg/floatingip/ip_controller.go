@@ -577,6 +577,7 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 			i.providerIDToRetry[providerID] = nRetry
 			i.retry(nRetry.nextRetry)
 		}
+		i.dnsDirty = true
 		_, status.nextRetry = status.retrySchedule.Next(status.attempts)
 		i.retry(status.nextRetry)
 		if originalState != status.state || originalMessage != status.message {
@@ -589,12 +590,17 @@ func (i *ipController) reconcileDNS(ctx context.Context) {
 	if len(i.ips) == 0 || i.dns == nil || !i.dnsDirty {
 		return
 	}
-	i.log.WithField("ips", i.ips).Info("updating dns")
 	var assignedIPs []string
 	for _, ip := range i.ips {
 		if i.ipToStatus[ip].state == flipopv1alpha1.IPStateActive {
 			assignedIPs = append(assignedIPs, ip)
 		}
+	}
+	i.log.WithField("ips", assignedIPs).Info("updating dns")
+	if len(assignedIPs) == 0 {
+		// If there are no assigned IPs we should skip the update. Deleting the record will cause an NXDOMAIN with long TTL.
+		i.log.Warn("no IPs assigned; skipping DNS update to avoid NXDOMAIN w/ long TTL")
+		return
 	}
 	err := i.dnsProvider.EnsureDNSARecordSet(ctx, i.dns.Zone, i.dns.RecordName, assignedIPs, i.dns.TTL)
 	if err != nil {
