@@ -1,4 +1,4 @@
-GO_VERSION := 1.22
+GO_VERSION := 1.23.1
 COMMIT ?= $(shell git rev-parse --short HEAD)
 SHELL=/bin/bash -o pipefail
 
