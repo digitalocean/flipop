@@ -307,6 +307,7 @@ func (i *ipController) reconcileDesiredIPs(ctx context.Context) {
 	for j := len(i.ips) + len(i.pendingIPs); j < i.desiredIPs; j++ {
 		i.log.Info("requesting ip from provider")
 		i.updateStatus = true
+		i.dnsDirty = true
 		ip, err := i.provider.CreateIP(ctx, i.region)
 		if err != nil {
 			i.createRetrySchedule = provider.ErrorToRetrySchedule(err)
@@ -320,8 +321,6 @@ func (i *ipController) reconcileDesiredIPs(ctx context.Context) {
 		i.pendingIPs = append(i.pendingIPs, ip)
 		i.createAttempts = 0
 		i.createError = ""
-		i.updateStatus = true
-		i.dnsDirty = true
 	}
 }
 
@@ -345,6 +344,7 @@ func (i *ipController) reconcilePendingIPs(ctx context.Context) {
 		}
 	}
 	i.updateStatus = true
+	i.dnsDirty = true
 	for _, ip := range i.pendingIPs {
 		// shortcut lookup for ip provider
 		i.ipToStatus[ip] = &ipStatus{
@@ -412,6 +412,7 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 			log.WithError(err).Error("retrieving IPs current provider ID")
 			if originalState != status.state || originalMessage != status.message {
 				i.updateStatus = true
+				i.dnsDirty = true
 			}
 			continue
 		}
@@ -483,8 +484,8 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 		status.retrySchedule = healthyRetrySchedule
 		_, status.nextRetry = status.retrySchedule.Next(status.attempts)
 		if originalState != status.state || originalMessage != status.message {
-
 			i.updateStatus = true
+			i.dnsDirty = true
 		}
 		log.Debug("provider ip mapping verified")
 	}
@@ -582,6 +583,7 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 		i.retry(status.nextRetry)
 		if originalState != status.state || originalMessage != status.message {
 			i.updateStatus = true
+			i.dnsDirty = true
 		}
 	}
 }
@@ -627,6 +629,7 @@ func (i *ipController) DisableNodes(nodes ...*corev1.Node) {
 			"provider_id": providerID,
 		})
 		i.updateStatus = true
+		i.dnsDirty = true
 		delete(i.providerIDToNodeName, providerID)
 		if ip := i.providerIDToIP[providerID]; ip != "" {
 			// Add this IP to the back of the list. This increases the chances that the IP mapping
@@ -664,6 +667,7 @@ func (i *ipController) EnableNodes(nodes ...*corev1.Node) {
 		}
 		i.poke()
 		i.updateStatus = true
+		i.dnsDirty = true
 		i.providerIDToNodeName[providerID] = node.Name
 		log := i.log.WithFields(logrus.Fields{
 			"node":        node.Name,
