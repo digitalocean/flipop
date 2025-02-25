@@ -4,6 +4,7 @@ metadata:
   labels:
     app: flipop
   name: flipop
+  namespace: flipop
 spec:
   replicas: 1
   selector:
