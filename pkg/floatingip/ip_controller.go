@@ -314,7 +314,7 @@ func (i *ipController) reconcileDesiredIPs(ctx context.Context) {
 			i.createAttempts, i.createNextRetry = i.createRetrySchedule.Next(i.createAttempts)
 			i.retry(i.createNextRetry)
 			i.log.WithError(err).Error("requesting new IP from provider")
-			i.createError = fmt.Sprintf("creating new ip with provider: %s", err)
+			i.createError = fmt.Sprintf("creating new ip with provider: %.1000s", err)
 			return
 		}
 		i.log.WithField("ip", ip).Info("created new ip with provider")
@@ -404,7 +404,7 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 				status.message = ""
 			} else {
 				status.state = flipopv1alpha1.IPStateError
-				status.message = fmt.Sprintf("retrieving IPs current provider ID: %s", err)
+				status.message = fmt.Sprintf("retrieving IPs current provider ID: %.1000s", err)
 			}
 			status.retrySchedule = provider.ErrorToRetrySchedule(err)
 			status.attempts, status.nextRetry = status.retrySchedule.Next(status.attempts)
@@ -566,7 +566,7 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 		} else {
 			status.state = flipopv1alpha1.IPStateError
 			status.retrySchedule = provider.ErrorToRetrySchedule(err)
-			status.message = fmt.Sprintf("assigning IP to node: %s", err)
+			status.message = fmt.Sprintf("assigning IP to node: %.1000s", err)
 			status.assignmentErrors++
 			log.WithError(err).Error("assigning IP to node")
 			if nRetry == nil {
