@@ -404,7 +404,7 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 				status.message = ""
 			} else {
 				status.state = flipopv1alpha1.IPStateError
-				status.message = fmt.Sprintf("retrieving IPs current provider ID: %s", err)
+				status.message = fmt.Sprintf("retrieving IPs current provider ID: %.100s", err)
 			}
 			status.retrySchedule = provider.ErrorToRetrySchedule(err)
 			status.attempts, status.nextRetry = status.retrySchedule.Next(status.attempts)
@@ -566,7 +566,7 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 		} else {
 			status.state = flipopv1alpha1.IPStateError
 			status.retrySchedule = provider.ErrorToRetrySchedule(err)
-			status.message = fmt.Sprintf("assigning IP to node: %s", err)
+			status.message = fmt.Sprintf("assigning IP to node: %.100s", err)
 			status.assignmentErrors++
 			log.WithError(err).Error("assigning IP to node")
 			if nRetry == nil {
