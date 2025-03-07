@@ -4,12 +4,12 @@ FROM ${GO_IMAGE}
 
 WORKDIR /go/src/github.com/digitalocean/flipop
 
-ENV GOPATH /go
+ENV GOPATH="/go"
 COPY . /go/src/github.com/digitalocean/flipop
 
 RUN go mod download
 
-# k8s.io/code-generator 
+# k8s.io/code-generator
 # Note: This is kept at a rather old version for now to keep diffs small.
 RUN mkdir -p /go/src/k8s.io && \
   cd /go/src/k8s.io && \
