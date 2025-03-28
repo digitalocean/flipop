@@ -18,6 +18,7 @@ package floatingip
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -29,6 +30,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubetypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -277,6 +279,62 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 		if err != nil {
 			log.WithError(err).Error("updating FloatingIPPool status")
 			return fmt.Errorf("updating FloatingIPPool status: %w", err)
+		}
+
+		c.poolLock.Lock()
+		pool, ok := c.pools[k8s.GetUID()]
+		if !ok {
+			return errors.New("failed to find pool")
+		}
+		nodes := pool.matchController.GetAllNodes()
+		c.poolLock.Unlock()
+
+		nodeToIPs := make(map[string]string)
+		for ip, ipStatus := range status.IPs {
+			if ipStatus.NodeName == "" {
+				continue
+			}
+			nodeToIPs[ipStatus.NodeName] = ip
+		}
+
+		for _, n := range nodes {
+			var updatedAddrs []corev1.NodeAddress
+			var updateNeeded bool
+			for _, addr := range n.Status.Addresses {
+				if addr.Type != "ReservedIP" {
+					updatedAddrs = append(updatedAddrs, addr)
+					continue
+				}
+				// IPs can be registered to other floating IP pools. If we don't know the IP, skip.
+				if _, ok := status.IPs[addr.Address]; !ok {
+					updatedAddrs = append(updatedAddrs, addr)
+					continue
+				}
+				if addr.Address == nodeToIPs[n.Name] {
+					// The node is properly configured.
+					updatedAddrs = append(updatedAddrs, addr)
+					continue
+				}
+				// This address is stale, flag the node for update and don't include in updatedAddrs.
+				updateNeeded = true
+			}
+			ip, ok := nodeToIPs[n.Name]
+			if ok {
+				updatedAddrs = append(updatedAddrs, corev1.NodeAddress{
+					Type:    "ReservedIP",
+					Address: ip,
+				})
+				updateNeeded = true
+			}
+			if !updateNeeded {
+				continue
+			}
+			n.Status.Addresses = updatedAddrs
+			_, err := c.kubeCS.CoreV1().Nodes().UpdateStatus(ctx, n, metav1.UpdateOptions{})
+			if err != nil {
+				log.WithError(err).WithField("node", n.Name).Error("updating node status")
+				return fmt.Errorf("updating node status: %w", err)
+			}
 		}
 		return nil
 	}
