@@ -43,6 +43,9 @@ import (
 )
 
 const (
+	// NodeAddressTypeReservedIP is a value for use in the node.Status.Addresses[].Type field.
+	NodeAddressTypeReservedIP = "ReservedIP"
+
 	floatingIPPoolResyncPeriod = 5 * time.Minute
 )
 
@@ -302,7 +305,7 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 			var updatedAddrs []corev1.NodeAddress
 			var updateNeeded bool
 			for _, addr := range n.Status.Addresses {
-				if addr.Type != "ReservedIP" {
+				if addr.Type != NodeAddressTypeReservedIP {
 					updatedAddrs = append(updatedAddrs, addr)
 					continue
 				}
@@ -322,7 +325,7 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 			ip, ok := nodeToIPs[n.Name]
 			if ok {
 				updatedAddrs = append(updatedAddrs, corev1.NodeAddress{
-					Type:    "ReservedIP",
+					Type:    NodeAddressTypeReservedIP,
 					Address: ip,
 				})
 				updateNeeded = true
