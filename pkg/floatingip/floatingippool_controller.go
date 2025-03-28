@@ -284,6 +284,7 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 		c.poolLock.Lock()
 		pool, ok := c.pools[k8s.GetUID()]
 		if !ok {
+			c.poolLock.Unlock()
 			return errors.New("failed to find pool")
 		}
 		nodes := pool.matchController.GetAllNodes()
