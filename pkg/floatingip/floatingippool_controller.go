@@ -274,20 +274,20 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 			log.WithError(err).Error("loading FloatingIPPool status")
 			return fmt.Errorf("loading FloatingIPPool: %w", err)
 		}
-		if reflect.DeepEqual(status, k8s.Status) {
-			return nil
-		}
-		k8s.Status = status
-		_, err = c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).UpdateStatus(ctx, k8s, metav1.UpdateOptions{})
-		if err != nil {
-			log.WithError(err).Error("updating FloatingIPPool status")
-			return fmt.Errorf("updating FloatingIPPool status: %w", err)
+		if !reflect.DeepEqual(status, k8s.Status) {
+			k8s.Status = status
+			_, err = c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).UpdateStatus(ctx, k8s, metav1.UpdateOptions{})
+			if err != nil {
+				log.WithError(err).Error("updating FloatingIPPool status")
+				return fmt.Errorf("updating FloatingIPPool status: %w", err)
+			}
 		}
 
 		c.poolLock.Lock()
 		pool, ok := c.pools[k8s.GetUID()]
 		if !ok {
 			c.poolLock.Unlock()
+			log.WithError(err).Error("failed to find pool")
 			return errors.New("failed to find pool")
 		}
 		nodes := pool.matchController.GetAllNodes()
@@ -301,21 +301,30 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 			nodeToIPs[ipStatus.NodeName] = ip
 		}
 
+		var nodeNames []string
+		for _, n := range nodes {
+			nodeNames = append(nodeNames, n.Name)
+		}
+		log.Infof("updating node status: %v", nodeNames)
+
 		for _, n := range nodes {
 			var updatedAddrs []corev1.NodeAddress
 			var updateNeeded bool
 			for _, addr := range n.Status.Addresses {
 				if addr.Type != NodeAddressTypeReservedIP {
+					log.Infof("skipping node %q addrong; wrong type %s:%s", n.Name, addr.Type, addr.Address)
 					updatedAddrs = append(updatedAddrs, addr)
 					continue
 				}
 				// IPs can be registered to other floating IP pools. If we don't know the IP, skip.
 				if _, ok := status.IPs[addr.Address]; !ok {
+					log.Infof("skipping node %q unknown address %s:%s", n.Name, addr.Type, addr.Address)
 					updatedAddrs = append(updatedAddrs, addr)
 					continue
 				}
 				if addr.Address == nodeToIPs[n.Name] {
 					// The node is properly configured.
+					log.Infof("skipping node %q up-to-date node address %s:%s", n.Name, addr.Type, addr.Address)
 					updatedAddrs = append(updatedAddrs, addr)
 					continue
 				}
@@ -331,6 +340,7 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 				updateNeeded = true
 			}
 			if !updateNeeded {
+				log.Debugf("node %q status unchanged", n.Name)
 				continue
 			}
 			n.Status.Addresses = updatedAddrs
