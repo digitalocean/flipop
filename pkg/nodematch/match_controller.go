@@ -479,6 +479,16 @@ func (m *Controller) OnDelete(obj interface{}) {
 	}
 }
 
+// GetNodeByName retrieves a Kubernetes node resource from the informer.
+func (m *Controller) GetAllNodes() []*corev1.Node {
+	nodes := m.nodeInformer.GetIndexer().List()
+	var out []*corev1.Node
+	for _, n := range nodes {
+		out = append(out, n.(*corev1.Node).DeepCopy())
+	}
+	return out
+}
+
 type node struct {
 	k8sNode      *corev1.Node
 	isNodeMatch  bool

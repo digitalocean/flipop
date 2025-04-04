@@ -18,6 +18,7 @@ package floatingip
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -29,6 +30,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubetypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -41,6 +43,9 @@ import (
 )
 
 const (
+	// NodeAddressTypeReservedIP is a value for use in the node.Status.Addresses[].Type field.
+	NodeAddressTypeReservedIP = "ReservedIP"
+
 	floatingIPPoolResyncPeriod = 5 * time.Minute
 )
 
@@ -269,14 +274,80 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 			log.WithError(err).Error("loading FloatingIPPool status")
 			return fmt.Errorf("loading FloatingIPPool: %w", err)
 		}
-		if reflect.DeepEqual(status, k8s.Status) {
-			return nil
+		if !reflect.DeepEqual(status, k8s.Status) {
+			k8s.Status = status
+			_, err = c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).UpdateStatus(ctx, k8s, metav1.UpdateOptions{})
+			if err != nil {
+				log.WithError(err).Error("updating FloatingIPPool status")
+				return fmt.Errorf("updating FloatingIPPool status: %w", err)
+			}
 		}
-		k8s.Status = status
-		_, err = c.flipopCS.FlipopV1alpha1().FloatingIPPools(k8s.Namespace).UpdateStatus(ctx, k8s, metav1.UpdateOptions{})
-		if err != nil {
-			log.WithError(err).Error("updating FloatingIPPool status")
-			return fmt.Errorf("updating FloatingIPPool status: %w", err)
+
+		c.poolLock.Lock()
+		pool, ok := c.pools[k8s.GetUID()]
+		if !ok {
+			c.poolLock.Unlock()
+			log.WithError(err).Error("failed to find pool")
+			return errors.New("failed to find pool")
+		}
+		nodes := pool.matchController.GetAllNodes()
+		c.poolLock.Unlock()
+
+		nodeToIPs := make(map[string]string)
+		for ip, ipStatus := range status.IPs {
+			if ipStatus.NodeName == "" {
+				continue
+			}
+			nodeToIPs[ipStatus.NodeName] = ip
+		}
+
+		var nodeNames []string
+		for _, n := range nodes {
+			nodeNames = append(nodeNames, n.Name)
+		}
+		log.Infof("updating node status: %v", nodeNames)
+
+		for _, n := range nodes {
+			var updatedAddrs []corev1.NodeAddress
+			var updateNeeded bool
+			for _, addr := range n.Status.Addresses {
+				if addr.Type != NodeAddressTypeReservedIP {
+					log.Infof("skipping node %q addrong; wrong type %s:%s", n.Name, addr.Type, addr.Address)
+					updatedAddrs = append(updatedAddrs, addr)
+					continue
+				}
+				// IPs can be registered to other floating IP pools. If we don't know the IP, skip.
+				if _, ok := status.IPs[addr.Address]; !ok {
+					log.Infof("skipping node %q unknown address %s:%s", n.Name, addr.Type, addr.Address)
+					updatedAddrs = append(updatedAddrs, addr)
+					continue
+				}
+				if addr.Address == nodeToIPs[n.Name] {
+					// The node is properly configured.
+					log.Infof("skipping node %q up-to-date node address %s:%s", n.Name, addr.Type, addr.Address)
+					continue
+				}
+				// This address is stale, flag the node for update and don't include in updatedAddrs.
+				updateNeeded = true
+			}
+			ip, ok := nodeToIPs[n.Name]
+			if ok {
+				updatedAddrs = append(updatedAddrs, corev1.NodeAddress{
+					Type:    NodeAddressTypeReservedIP,
+					Address: ip,
+				})
+				updateNeeded = true
+			}
+			if !updateNeeded {
+				log.Debugf("node %q status unchanged", n.Name)
+				continue
+			}
+			n.Status.Addresses = updatedAddrs
+			_, err := c.kubeCS.CoreV1().Nodes().UpdateStatus(ctx, n, metav1.UpdateOptions{})
+			if err != nil {
+				log.WithError(err).WithField("node", n.Name).Error("updating node status")
+				return fmt.Errorf("updating node status: %w", err)
+			}
 		}
 		return nil
 	}
