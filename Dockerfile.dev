@@ -4,7 +4,7 @@ FROM ${GO_IMAGE}
 
 WORKDIR /go/src/github.com/digitalocean/flipop
 
-ENV GOPATH /go
+ENV GOPATH=/go
 COPY . /go/src/github.com/digitalocean/flipop
 
 RUN go mod download

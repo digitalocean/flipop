@@ -305,26 +305,22 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 		for _, n := range nodes {
 			nodeNames = append(nodeNames, n.Name)
 		}
-		log.Infof("updating node status: %v", nodeNames)
 
 		for _, n := range nodes {
 			var updatedAddrs []corev1.NodeAddress
 			var updateNeeded bool
 			for _, addr := range n.Status.Addresses {
 				if addr.Type != NodeAddressTypeReservedIP {
-					log.Infof("skipping node %q addrong; wrong type %s:%s", n.Name, addr.Type, addr.Address)
 					updatedAddrs = append(updatedAddrs, addr)
 					continue
 				}
 				// IPs can be registered to other floating IP pools. If we don't know the IP, skip.
 				if _, ok := status.IPs[addr.Address]; !ok {
-					log.Infof("skipping node %q unknown address %s:%s", n.Name, addr.Type, addr.Address)
 					updatedAddrs = append(updatedAddrs, addr)
 					continue
 				}
 				if addr.Address == nodeToIPs[n.Name] {
 					// The node is properly configured.
-					log.Infof("skipping node %q up-to-date node address %s:%s", n.Name, addr.Type, addr.Address)
 					continue
 				}
 				// This address is stale, flag the node for update and don't include in updatedAddrs.
@@ -343,6 +339,7 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 				continue
 			}
 			n.Status.Addresses = updatedAddrs
+			log.Infof("updating node %q address status", n.Name)
 			_, err := c.kubeCS.CoreV1().Nodes().UpdateStatus(ctx, n, metav1.UpdateOptions{})
 			if err != nil {
 				log.WithError(err).WithField("node", n.Name).Error("updating node status")
