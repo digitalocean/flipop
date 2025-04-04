@@ -301,11 +301,6 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 			nodeToIPs[ipStatus.NodeName] = ip
 		}
 
-		var nodeNames []string
-		for _, n := range nodes {
-			nodeNames = append(nodeNames, n.Name)
-		}
-
 		for _, n := range nodes {
 			var updatedAddrs []corev1.NodeAddress
 			var updateNeeded bool
