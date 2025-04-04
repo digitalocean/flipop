@@ -481,8 +481,6 @@ func (m *Controller) OnDelete(obj interface{}) {
 
 // GetNodeByName retrieves a Kubernetes node resource from the informer.
 func (m *Controller) GetAllNodes() []*corev1.Node {
-	m.Lock()
-	defer m.Unlock()
 	nodes := m.nodeInformer.GetIndexer().List()
 	var out []*corev1.Node
 	for _, n := range nodes {

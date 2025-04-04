@@ -325,7 +325,6 @@ func (c *Controller) statusUpdater(log logrus.FieldLogger, name, namespace strin
 				if addr.Address == nodeToIPs[n.Name] {
 					// The node is properly configured.
 					log.Infof("skipping node %q up-to-date node address %s:%s", n.Name, addr.Type, addr.Address)
-					updatedAddrs = append(updatedAddrs, addr)
 					continue
 				}
 				// This address is stale, flag the node for update and don't include in updatedAddrs.
