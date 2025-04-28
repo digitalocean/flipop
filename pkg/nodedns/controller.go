@@ -301,7 +301,7 @@ func (d *dnsEnablerDisabler) metricLabels() prometheus.Labels {
 	}
 }
 
-func (d *dnsEnablerDisabler) EnableNodes(nodes ...*corev1.Node) {
+func (d *dnsEnablerDisabler) EnableNodes(ctx context.Context, nodes ...*corev1.Node) {
 	d.lock.Lock()
 	defer d.lock.Unlock()
 	for _, node := range nodes {
@@ -310,7 +310,7 @@ func (d *dnsEnablerDisabler) EnableNodes(nodes ...*corev1.Node) {
 	d.applyDNS()
 }
 
-func (d *dnsEnablerDisabler) DisableNodes(nodes ...*corev1.Node) {
+func (d *dnsEnablerDisabler) DisableNodes(ctx context.Context, nodes ...*corev1.Node) {
 	d.lock.Lock()
 	defer d.lock.Unlock()
 	for _, node := range nodes {

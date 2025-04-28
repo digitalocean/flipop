@@ -36,6 +36,11 @@ import (
 
 var fakeNow = time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC)
 
+type annotateCall struct {
+	NodeName string
+	IP       string
+}
+
 func TestIPControllerReconcileDesiredIPs(t *testing.T) {
 	type createIPRes struct {
 		ip     string
@@ -229,7 +234,7 @@ func TestIPControllerReconcileIPStatus(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			i := newIPController(logrus.New(), nil, nil)
+			i := newIPController(logrus.New(), nil, nil, nil)
 			i.updateProviders(&provider.MockIPProvider{
 				IPToProviderIDFunc: func(_ context.Context, ip string) (string, error) {
 					require.GreaterOrEqual(t, len(tc.responses), 1, "unexpected call to IPToProviderIDFunc")
@@ -286,6 +291,7 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 		expectIPRetry         bool
 		expectAssignableIPs   []string
 		expectAssignableNodes []string
+		expectAnnotateCall    *annotateCall
 		eval                  func(i *ipController)
 	}{
 		{
@@ -299,8 +305,10 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 			expectProviderIDToIP: map[string]string{"mock://1": "192.168.1.1"},
 			responses:            []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1"}},
 			expectIPRetry:        true, // We always retry, because of assign
+			expectAnnotateCall:   &annotateCall{NodeName: "hello-world", IP: "192.168.1.1"},
 			setup: func(i *ipController) {
 				i.ipToStatus["192.168.1.1"] = &ipStatus{}
+				i.providerIDToNodeName["mock://1"] = "hello-world"
 			},
 			eval: func(i *ipController) {
 				require.Equal(t, provider.RetryFast, i.ipToStatus["192.168.1.1"].retrySchedule)
@@ -314,8 +322,10 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 			expectProviderIDToIP: map[string]string{"mock://1": "192.168.1.1"},
 			responses:            []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1"}},
 			expectIPRetry:        true, // We always retry, because of assign
+			expectAnnotateCall:   &annotateCall{NodeName: "hello-world", IP: "192.168.1.1"},
 			setup: func(i *ipController) {
 				i.ipToStatus["192.168.1.1"] = &ipStatus{}
+				i.providerIDToNodeName["mock://1"] = "hello-world"
 				i.assignmentCoolOff = time.Second
 				i.now = func() time.Time { return fakeNow }
 			},
@@ -348,8 +358,10 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 			expectProviderIDToIP: map[string]string{"mock://1": "192.168.1.1"},
 			responses:            []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1", err: provider.ErrInProgress}},
 			expectIPRetry:        true, // We always retry, because of assign
+			expectAnnotateCall:   &annotateCall{NodeName: "hello-world", IP: "192.168.1.1"},
 			setup: func(i *ipController) {
 				i.ipToStatus["192.168.1.1"] = &ipStatus{}
+				i.providerIDToNodeName["mock://1"] = "hello-world"
 			},
 			eval: func(i *ipController) {
 				require.Equal(t, provider.RetryFast, i.ipToStatus["192.168.1.1"].retrySchedule)
@@ -376,7 +388,13 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			i := newIPController(logrus.New(), nil, nil)
+
+			var annotateCalls []annotateCall
+			onAnnotate := func(_ context.Context, nodeName, ip string) error {
+				annotateCalls = append(annotateCalls, annotateCall{nodeName, ip})
+				return nil
+			}
+			i := newIPController(logrus.New(), nil, nil, onAnnotate)
 			i.updateProviders(&provider.MockIPProvider{
 				AssignIPFunc: func(_ context.Context, ip string, providerID string) error {
 					require.GreaterOrEqual(t, len(tc.responses), 1, "unexpected call to AssignIPFunc")
@@ -418,6 +436,13 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 			for _, providerID := range tc.expectAssignableNodes {
 				require.True(t, i.assignableNodes.IsSet(providerID))
 			}
+
+			if tc.expectAnnotateCall != nil {
+				require.Len(t, annotateCalls, 1)
+				assert.Equal(t, *tc.expectAnnotateCall, annotateCalls[0])
+			} else {
+				assert.Len(t, annotateCalls, 0)
+			}
 		})
 	}
 }
@@ -427,6 +452,7 @@ func TestIPControllerDisableNodes(t *testing.T) {
 		name               string
 		setup              func(i *ipController)
 		expectAssignableIP bool
+		expectAnnotateCall *annotateCall
 	}{
 		{
 			name: "node was assignable",
@@ -444,6 +470,7 @@ func TestIPControllerDisableNodes(t *testing.T) {
 				i.providerIDToNodeName["mock://1"] = "hello-world"
 			},
 			expectAssignableIP: true,
+			expectAnnotateCall: &annotateCall{NodeName: "hello-world", IP: ""},
 		},
 		{
 			name: "never seen",
@@ -452,18 +479,32 @@ func TestIPControllerDisableNodes(t *testing.T) {
 	for _, tc := range tcs {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			i := newIPController(logrus.New(), nil, nil)
+			var annotateCalls []annotateCall
+			onAnnotate := func(_ context.Context, nodeName, ip string) error {
+				annotateCalls = append(annotateCalls, annotateCall{nodeName, ip})
+				return nil
+			}
+			i := newIPController(logrus.New(), nil, nil, onAnnotate)
 			if tc.setup != nil {
 				tc.setup(i)
 			}
-			i.DisableNodes(&corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "hello-world", UID: uuid.NewUUID()},
-				Spec:       corev1.NodeSpec{ProviderID: "mock://1"},
-			})
+			i.DisableNodes(
+				context.TODO(),
+				&corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{Name: "hello-world", UID: uuid.NewUUID()},
+					Spec:       corev1.NodeSpec{ProviderID: "mock://1"}},
+			)
 			require.False(t, i.assignableNodes.IsSet("mock://"))
 			require.NotContains(t, i.providerIDToNodeName, "mock://1")
 			if tc.expectAssignableIP {
 				require.True(t, i.assignableIPs.IsSet("192.168.1.1"))
+			}
+
+			if tc.expectAnnotateCall != nil {
+				require.Len(t, annotateCalls, 1)
+				assert.Equal(t, *tc.expectAnnotateCall, annotateCalls[0])
+			} else {
+				assert.Len(t, annotateCalls, 0)
 			}
 		})
 	}
@@ -471,9 +512,10 @@ func TestIPControllerDisableNodes(t *testing.T) {
 
 func TestIPControllers(t *testing.T) {
 	tcs := []struct {
-		name             string
-		setup            func(i *ipController)
-		expectAssignable bool
+		name               string
+		setup              func(i *ipController)
+		expectAssignable   bool
+		expectAnnotateCall *annotateCall
 	}{
 		{
 			name:             "simple",
@@ -489,27 +531,49 @@ func TestIPControllers(t *testing.T) {
 			},
 		},
 		{
-			name: "already assigned",
+			name: "already enabled and assigned",
 			setup: func(i *ipController) {
 				i.providerIDToIP["mock://1"] = "192.168.1.1"
 				i.ipToStatus["192.168.1.1"] = &ipStatus{nodeProviderID: "mock://1"}
 				i.providerIDToNodeName["mock://1"] = "hello-world"
 			},
 		},
+		{
+			name: "enabling node; already assigned to ip",
+			setup: func(i *ipController) {
+				i.providerIDToIP["mock://1"] = "192.168.1.1"
+				i.ipToStatus["192.168.1.1"] = &ipStatus{nodeProviderID: "mock://1"}
+			},
+			expectAnnotateCall: &annotateCall{NodeName: "hello-world", IP: "192.168.1.1"},
+		},
 	}
 	for _, tc := range tcs {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			i := newIPController(log.NewTestLogger(t), nil, nil)
+			var annotateCalls []annotateCall
+			onAnnotate := func(_ context.Context, nodeName, ip string) error {
+				annotateCalls = append(annotateCalls, annotateCall{nodeName, ip})
+				return nil
+			}
+			i := newIPController(log.NewTestLogger(t), nil, nil, onAnnotate)
 			if tc.setup != nil {
 				tc.setup(i)
 			}
-			i.EnableNodes(&corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "hello-world", UID: uuid.NewUUID()},
-				Spec:       corev1.NodeSpec{ProviderID: "mock://1"},
-			})
+			i.EnableNodes(
+				context.TODO(),
+				&corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{Name: "hello-world", UID: uuid.NewUUID()},
+					Spec:       corev1.NodeSpec{ProviderID: "mock://1"}},
+			)
 			require.Equal(t, tc.expectAssignable, i.assignableNodes.IsSet("mock://1"))
 			require.Equal(t, "hello-world", i.providerIDToNodeName["mock://1"])
+
+			if tc.expectAnnotateCall != nil {
+				require.Len(t, annotateCalls, 1)
+				assert.Equal(t, *tc.expectAnnotateCall, annotateCalls[0])
+			} else {
+				assert.Len(t, annotateCalls, 0)
+			}
 		})
 	}
 }
@@ -574,7 +638,7 @@ func TestReconcilePendingIPs(t *testing.T) {
 				}
 				t.Error("expected call to onNewIPs")
 				return nil
-			}, nil)
+			}, nil, nil)
 			if tc.setup != nil {
 				tc.setup(i)
 			}

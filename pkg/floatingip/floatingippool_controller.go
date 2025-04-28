@@ -19,6 +19,8 @@ package floatingip
 import (
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/json"
+	"net"
 	"reflect"
 	"sync"
 	"time"
@@ -172,7 +174,8 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 		}
 		ipc := newIPController(log,
 			c.ipUpdater(log, k8sPool.Name, k8sPool.Namespace),
-			c.statusUpdater(log, k8sPool.Name, k8sPool.Namespace))
+			c.statusUpdater(log, k8sPool.Name, k8sPool.Namespace),
+			c.annotationUpdater(log))
 		pool = floatingIPPool{
 			namespace:       k8sPool.Namespace,
 			name:            k8sPool.Name,
@@ -199,7 +202,7 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 	}
 	coolOff := time.Duration(k8sPool.Spec.AssignmentCoolOffSeconds * float64(time.Second))
 	ipChange := pool.ipController.updateProviders(prov, dnsProv, k8sPool.Spec.Region, coolOff)
-	pool.ipController.updateIPs(k8sPool.Spec.IPs, k8sPool.Spec.DesiredIPs)
+	pool.ipController.updateIPs(ctx, k8sPool.Spec.IPs, k8sPool.Spec.DesiredIPs)
 	pool.ipController.updateDNSSpec(k8sPool.Spec.DNSRecordSet)
 	if ipChange {
 		pool.ipController.start(ctx)
@@ -294,6 +297,58 @@ func (c *Controller) ipUpdater(log logrus.FieldLogger, name, namespace string) n
 		if err != nil {
 			log.WithError(err).Error("updating FloatingIPPool status")
 			return fmt.Errorf("updating FloatingIPPool: %w", err)
+		}
+		return nil
+	}
+}
+
+func (c *Controller) annotationUpdater(log logrus.FieldLogger) annotationUpdateFunc {
+	return func(ctx context.Context, nodeName, ip string) error {
+		log := log.WithFields(logrus.Fields{
+			"ip":   ip,
+			"node": nodeName,
+		})
+
+		node, err := c.kubeCS.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get node: %w", err)
+		}
+		currentAnnotationValue := node.Annotations[flipopv1alpha1.IPv4ReservedIPAnnotation]
+		// If the annotation already exists with the correct value, then NoOP
+		if ip == currentAnnotationValue {
+			log.Debug("Reserved IP annotation the same, no update made")
+			return nil
+		}
+		log.Debugf("Reserved IP annotion '%v' does not match passed in ip.", currentAnnotationValue)
+
+		var annotationValue interface{}
+
+		if ip != "" {
+			if parsedIP := net.ParseIP(ip); parsedIP == nil || parsedIP.To4() == nil {
+				err := fmt.Errorf("invalid IPv4 address: %s", ip)
+				log.WithError(err).Error("IP validation failed")
+				return err
+			}
+			annotationValue = ip
+			log.Info("setting Reserved IP annotation")
+		} else {
+			annotationValue = nil
+			log.Info("removing Reserved IP annotation")
+		}
+
+		patch := map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"annotations": map[string]interface{}{
+					flipopv1alpha1.IPv4ReservedIPAnnotation: annotationValue,
+				},
+			},
+		}
+		data, _ := json.Marshal(patch)
+
+		_, err = c.kubeCS.CoreV1().Nodes().Patch(ctx, nodeName, kubetypes.MergePatchType, data, metav1.PatchOptions{})
+		if err != nil {
+			log.WithError(err).Error("updating Reserved IP annotation")
+			return fmt.Errorf("updating annotation: %w", err)
 		}
 		return nil
 	}

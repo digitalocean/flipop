@@ -47,8 +47,8 @@ const (
 // NodeEnableDisabler describes a controller which can enable or disable sets of nodes, based
 // upon decisions reached by the node match controller.
 type NodeEnableDisabler interface {
-	EnableNodes(...*corev1.Node)
-	DisableNodes(...*corev1.Node)
+	EnableNodes(ctx context.Context, nodes ...*corev1.Node)
+	DisableNodes(ctx context.Context, nodes ...*corev1.Node)
 }
 
 // Controller watches Kubernetes nodes and pods and enables or disables them with the provided
@@ -244,7 +244,7 @@ func (m *Controller) run() {
 		}
 	}
 	sort.Sort(byNodeName(enable)) // make this list reproducable
-	m.action.EnableNodes(enable...)
+	m.action.EnableNodes(m.ctx, enable...)
 	m.primed = true
 }
 
@@ -266,7 +266,7 @@ func (m *Controller) getNodePods(nodeName string) ([]*corev1.Pod, error) {
 }
 
 func (m *Controller) deleteNode(k8sNode *corev1.Node) {
-	m.action.DisableNodes(k8sNode)
+	m.action.DisableNodes(m.ctx, k8sNode)
 	delete(m.nodeNameToNode, k8sNode.Name)
 	return
 }
@@ -319,13 +319,13 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 		log.Info("enabling node")
 		n.enabled = true
 		if m.primed {
-			m.action.EnableNodes(n.k8sNode)
+			m.action.EnableNodes(m.ctx, n.k8sNode)
 		}
 	} else {
 		log.Info("disabling node")
 		n.enabled = false
 		// This should be idempotent, so we don't need to care if we're primed yet.
-		m.action.DisableNodes(n.k8sNode)
+		m.action.DisableNodes(m.ctx, n.k8sNode)
 	}
 	return nil
 }
@@ -391,14 +391,14 @@ func (m *Controller) updatePod(pod *corev1.Pod) error {
 			log.Debug("enabling node; pod update met node match criteria")
 			n.enabled = true
 			if m.primed {
-				m.action.EnableNodes(n.k8sNode)
+				m.action.EnableNodes(m.ctx, n.k8sNode)
 			}
 		}
 	} else {
 		delete(n.matchingPods, podKey)
 		if len(n.matchingPods) == 0 {
 			log.Debug("disabling node; updated pod no longer meets node match criteria")
-			m.action.DisableNodes(n.k8sNode)
+			m.action.DisableNodes(m.ctx, n.k8sNode)
 		}
 	}
 	return nil
@@ -415,7 +415,7 @@ func (m *Controller) deletePod(pod *corev1.Pod) {
 	podKey := podNamespacedName(pod)
 	delete(n.matchingPods, podKey)
 	if len(n.matchingPods) == 0 {
-		m.action.DisableNodes(n.k8sNode)
+		m.action.DisableNodes(m.ctx, n.k8sNode)
 	}
 }
 
