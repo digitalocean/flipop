@@ -277,6 +277,9 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 		return nil
 	}
 	providerID := k8sNode.Spec.ProviderID
+	newReservedIP := k8sNode.Annotations[flipopv1alpha1.IPv4ReservedIPAnnotation]
+	var oldReservedIP string
+
 	log := m.log.WithFields(logrus.Fields{"node": k8sNode.Name, "node_provider_id": providerID})
 	n, ok := m.nodeNameToNode[k8sNode.Name]
 	if !ok {
@@ -288,6 +291,7 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 		m.nodeNameToNode[n.getName()] = n
 		log.Info("new node")
 	} else {
+		oldReservedIP = n.k8sNode.Annotations[flipopv1alpha1.IPv4ReservedIPAnnotation]
 		n.k8sNode = k8sNode
 		log.Debug("node updated")
 	}
@@ -295,10 +299,18 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 	var oldNodeMatch = n.isNodeMatch
 	n.isNodeMatch = m.isNodeMatch(n)
 
-	if oldNodeMatch == n.isNodeMatch {
-		log.Debug("node match unchanged")
+	// If the nodes match status and the reservedIP has not changed, then we ignore the update
+	if oldReservedIP == newReservedIP && oldNodeMatch == n.isNodeMatch {
+		log.WithFields(logrus.Fields{
+			"old_ip": oldReservedIP,
+			"new_ip": newReservedIP,
+		}).Debug("node match and reserved IP annotation unchanged")
 		return nil
 	}
+	log.WithFields(logrus.Fields{
+		"old_ip": oldReservedIP,
+		"new_ip": newReservedIP,
+	}).Debug("node match or reserved IP annotation changed")
 
 	if n.isNodeMatch && len(n.matchingPods) > 0 {
 		// We stop tracking pods when the node doesn't match.

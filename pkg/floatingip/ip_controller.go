@@ -636,23 +636,29 @@ func (i *ipController) reconcileDNS(ctx context.Context) {
 func (i *ipController) DisableNodes(ctx context.Context, nodes ...*corev1.Node) {
 	i.lock.Lock()
 	defer i.lock.Unlock()
+	var changed bool
+
 	for _, node := range nodes {
 		providerID := node.Spec.ProviderID
-		if providerID == "" {
-			continue
-		}
-
-		if _, ok := i.providerIDToNodeName[providerID]; !ok {
-			continue // Wasn't enabled
-		}
 		log := i.log.WithFields(logrus.Fields{
 			"node":        node.Name,
 			"provider_id": providerID,
 		})
-		i.updateStatus = true
-		i.dnsDirty = true
+		// Skip if providerID not assigned as there is something unexcpeted going on with the node
+		if providerID == "" {
+			log.Warn("spec.providerID not set")
+			continue
+		}
+		// skip if not currently enabled
+		if _, ok := i.providerIDToNodeName[providerID]; !ok {
+			continue
+		}
+
+		// remove from enabled set
 		delete(i.providerIDToNodeName, providerID)
 		if ip := i.providerIDToIP[providerID]; ip != "" {
+			// node had an IP → unassign & annotate & mark DNS dirty
+
 			// Add this IP to the back of the list. This increases the chances that the IP mapping
 			// can be retained if the node recovers.
 			i.assignableIPs.Add(ip, false)
@@ -670,12 +676,22 @@ func (i *ipController) DisableNodes(ctx context.Context, nodes ...*corev1.Node) 
 				}
 			}
 
+			// Ensure DNS gets update to reflect this unassigned IP address
+			i.updateStatus = true
+			i.dnsDirty = true
+
 		} else {
+			// node did not have an IP address, no need to do DNS update
 			log.Info("node disabled")
 		}
-		i.assignableNodes.Delete(providerID)
+		// We remove the node from assignable node (since it's disabled)
 		// We leave the providerID<->IP mappings in providerIDToIP/ipStatus.nodeProviderID so we can
 		// reuse the IP mapping, if it's not immediately recovered.
+		i.assignableNodes.Delete(providerID)
+		// If we get here then a node has been disabled, and we need to run reconcile
+		changed = true
+	}
+	if changed {
 		i.poke()
 	}
 }
@@ -683,24 +699,26 @@ func (i *ipController) DisableNodes(ctx context.Context, nodes ...*corev1.Node) 
 func (i *ipController) EnableNodes(ctx context.Context, nodes ...*corev1.Node) {
 	i.lock.Lock()
 	defer i.lock.Unlock()
+	var changed bool
 
 	for _, node := range nodes {
 		providerID := node.Spec.ProviderID
 		if providerID == "" {
 			continue
 		}
+		// skip if already marked enabled
 		if _, ok := i.providerIDToNodeName[providerID]; ok {
-			continue // Already enabled.
+			continue
 		}
-		i.poke()
-		i.updateStatus = true
-		i.dnsDirty = true
+
+		// mark this node enabled
 		i.providerIDToNodeName[providerID] = node.Name
 		log := i.log.WithFields(logrus.Fields{
 			"node":        node.Name,
 			"provider_id": providerID,
 		})
 		if ip := i.providerIDToIP[providerID]; ip != "" {
+			// node already had an IP → re‑annotate & trigger DNS
 			log.WithField("ip", ip).Info("enabling node; already assigned to ip")
 			status := i.ipToStatus[ip]
 			status.nodeProviderID = providerID // should already be set.
@@ -709,6 +727,7 @@ func (i *ipController) EnableNodes(ctx context.Context, nodes ...*corev1.Node) {
 			status.retrySchedule = provider.RetryFast
 			status.attempts = 0
 			_, status.nextRetry = status.retrySchedule.Next(status.attempts)
+			// remove from assignableIPs so we don’t re‑assign it
 			i.assignableIPs.Delete(ip)
 			// Since the IP address is already assigned to the node we want to ensure the annotation reflects it as well.
 			if i.onAnnotate != nil {
@@ -717,10 +736,20 @@ func (i *ipController) EnableNodes(ctx context.Context, nodes ...*corev1.Node) {
 					i.log.WithError(err).Error("updating Reserved IP annotation")
 				}
 			}
-			continue // Already has an IP.
+			// Ensure DNS gets update to reflect this reused IP address
+			i.updateStatus = true
+			i.dnsDirty = true
+		} else {
+			// brand‑new node needs an IP, queue it—but DNS waits until assign
+			log.Info("enabling node; submitted to assignable node queue")
+			i.assignableNodes.Add(providerID, false)
 		}
-		log.Info("enabling node; submitted to assignable node queue")
-		i.assignableNodes.Add(providerID, false)
+		// If we get here then a node has been enabled, and we need to run reconcile
+		changed = true
+	}
+
+	if changed {
+		i.poke()
 	}
 }
 
