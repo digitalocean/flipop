@@ -337,22 +337,31 @@ func (d *dnsEnablerDisabler) applyDNS() {
 	for _, node := range d.activeNodes {
 		var found bool
 		ll := ll.WithField("node", node.Name)
-		for _, addr := range node.Status.Addresses {
-			if addr.Type != addressType {
-				continue
+
+		if addressType == flipopv1alpha1.IPv4ReservedIPAnnotation {
+			reservedIP, ok := node.Annotations[flipopv1alpha1.IPv4ReservedIPAnnotation]
+			if ok {
+				ips = append(ips, reservedIP)
+				found = true
 			}
-			ip := net.ParseIP(addr.Address)
-			if ip == nil {
-				ll.WithField("address", addr.Address).Warn("Failed to parse IP")
-				continue
+		} else {
+			for _, addr := range node.Status.Addresses {
+				if addr.Type != addressType {
+					continue
+				}
+				ip := net.ParseIP(addr.Address)
+				if ip == nil {
+					ll.WithField("address", addr.Address).Warn("Failed to parse IP")
+					continue
+				}
+				ip = ip.To4()
+				if ip == nil {
+					ll.WithField("address", addr.Address).Warn("IPv6 addresses are NOT currently supported")
+					continue
+				}
+				ips = append(ips, ip.String())
+				found = true
 			}
-			ip = ip.To4()
-			if ip == nil {
-				ll.WithField("address", addr.Address).Warn("IPv6 addresses are NOT currently supported")
-				continue
-			}
-			ips = append(ips, ip.String())
-			found = true
 		}
 		if !found {
 			ll.Warn("matching node had no IPs of the expected type")
