@@ -319,7 +319,7 @@ func (c *Controller) annotationUpdater(log logrus.FieldLogger) annotationUpdateF
 			log.Debug("Reserved IP annotation the same, no update made")
 			return nil
 		}
-		log.Debugf("Reserved IP annotion '%v' does not match passed in ip.", currentAnnotationValue)
+		log.Debugf("Reserved IP annotion value '%v' does not match passed in ip, will update the annotion", currentAnnotationValue)
 
 		var annotationValue interface{}
 
