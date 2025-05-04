@@ -393,6 +393,7 @@ func (d *dnsEnablerDisabler) applyDNS() {
 		status.Error = fmt.Sprintf("Failed to update DNS: %s", err.Error())
 	} else {
 		ll.Info("DNS records updated")
+		ll.WithField("ips", ips).Debug("DNS record updated")
 		status.State = flipopv1alpha1.NodeDNSRecordActive
 	}
 	err = updateStatus(d.ctx, d.flipopCS, d.k8s.Name, d.k8s.Namespace, status)
