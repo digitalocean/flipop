@@ -171,74 +171,30 @@ Each provider instruments calls in `pkg/provider/metrics.go`:
 
 Set credentials as environment variables in your operator namespace.
 
+** Note: ** For large clusters, it's recommended to request an increase in your API rate limit to mitigate any API throttling due to DNS updates. Large number of DNS updates can be made during events, such as a cluster upgrade, where nodes matching status changes frequently. 
+
 ---
 
 ## Installation
 
-1. Create a namespace and secrets:
-
    ```bash
-   kubectl create namespace flipop
-   kubectl create secret generic flipop -n flipop \
-     --from-literal=DIGITALOCEAN_ACCESS_TOKEN="$DIGITALOCEAN_ACCESS_TOKEN" \
-     --from-literal=CLOUDFLARE_TOKEN="$CLOUDFLARE_TOKEN"
+    kubectl create namespace flipop
+    kubectl create secret generic flipop -n flipop --from-literal=DIGITALOCEAN_ACCESS_TOKEN="CENSORED"
+    kubectl apply -n flipop -f k8s
    ```
-2. Apply CRDs and controller manifests:
+---
 
-   ```bash
-   kubectl apply -n flipop -f https://raw.githubusercontent.com/your-org/flipop/main/config/crd/ \
-     && kubectl apply -n flipop -f https://raw.githubusercontent.com/your-org/flipop/main/config/manager/
-   ```
-3. Verify pods are running:
+## Why not operator-framework/kubebuilder?
 
-   ```bash
-   kubectl -n flipop get pods
-   ```
+This operator is concerned with the relationships between FloatingIPPool, Node, and Pod resources. The controller-runtime (leveraged by kubebuilder) and operator-framework assume related objects are owned by the controller objects. OwnerReferences trigger garbage collection, which is a non-starter for this use-case. Deleting a FloatingIPPool shouldn't delete the Pods and Nodes its concerned with. The controller-runtime also assumes we're interested in all resources we "own". While controllers can be constrained with label selectors and namespaces, controllers can only be added to manager, not removed. In the case of this controller, we're likely only interested a small subset of pods and nodes, but those subscriptions may change based upon the definition in the FloatingIPPool resource.
 
 ---
 
-## Usage
-
-1. Configure a `FloatingIPPool` or `NodeDNSRecordSet` as shown above.
-2. Check status:
-
-   ```bash
-   kubectl describe floatingippool <name>
-   kubectl describe nodednsrecordset <name>
-   ```
-3. Monitor metrics on Prometheus under namespaces `flipop_floatingippoolcontroller_*`, `flipop_nodednsrecordset_*`, and provider metrics under `flipop_<provider>_calls_total` and `flipop_<provider>_call_duration_seconds`.
+## TODO
+- __Grace-periods__ - Moving IPs has a cost. It breaks all active connections, has a momentary period where connections will fail, and risks errors.  In some cases it may be better to give the node a chance to recover.
 
 ---
 
-## Development
+## Bugs / PRs / Contributing
 
-* **Run unit tests**:
-
-  ```bash
-  go test ./pkg/... -cover
-  ```
-* **Linting**:
-
-  ```bash
-  golangci-lint run
-  ```
-* **Build/operator image**:
-
-  ```bash
-  make build-image
-  ```
-
----
-
-## Contributing
-
-1. Fork the repo and create a feature branch.
-2. Write tests for new behavior.
-3. Submit a pull request with clear description and linked issue.
-4. Ensure CI checks pass.
-
----
-
-## License
-
-Apache License 2.0. See [LICENSE](LICENSE) for details.
+At DigitalOcean we value and love our community! If you have any issues or would like to contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
