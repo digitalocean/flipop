@@ -19,6 +19,8 @@ package floatingip
 import (
 	"context"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/json"
 	"net"
 	"reflect"
@@ -66,6 +68,14 @@ type floatingIPPool struct {
 	matchController *nodematch.Controller
 	ipController    *ipController
 }
+
+// NodeGetter is implemented by anything that can return a Node from a node name.
+type nodeGetter interface {
+	GetNodeByName(string) (*corev1.Node, error)
+}
+
+// getNodeByNameFunc is a function that returns a Node given its name.
+type getNodeByNameFunc func(string) (*corev1.Node, error)
 
 // NewController creates a new Controller.
 func NewController(
@@ -175,7 +185,7 @@ func (c *Controller) updateOrAdd(k8sPool *flipopv1alpha1.FloatingIPPool) {
 		ipc := newIPController(log,
 			c.ipUpdater(log, k8sPool.Name, k8sPool.Namespace),
 			c.statusUpdater(log, k8sPool.Name, k8sPool.Namespace),
-			c.annotationUpdater(log))
+			c.annotationUpdater(log, c.getNodeFromPools))
 		pool = floatingIPPool{
 			namespace:       k8sPool.Namespace,
 			name:            k8sPool.Name,
@@ -302,15 +312,41 @@ func (c *Controller) ipUpdater(log logrus.FieldLogger, name, namespace string) n
 	}
 }
 
-func (c *Controller) annotationUpdater(log logrus.FieldLogger) annotationUpdateFunc {
+// getNodeFromControllers looks through all the FloatingIpPools for data on a specified Node.
+// This data is retrieved from cache maintained by a NodeInformer.
+// Function separated from getNodeFromPools to facilitate testing
+func getNodeFromControllers(nodeName string, controllers []nodeGetter) (*corev1.Node, error) {
+	for _, controller := range controllers {
+		node, err := controller.GetNodeByName(nodeName)
+		if err == nil {
+			return node, nil
+		}
+		if !errors.IsNotFound(err) {
+			return nil, fmt.Errorf("unexpected error retrieving node: %w", err)
+		}
+	}
+	// If we get here, then node is not found in any pool
+	return nil, fmt.Errorf("unable to find node with name %s in any FloatingIpPool", nodeName)
+}
+
+func (c *Controller) getNodeFromPools(nodeName string) (*corev1.Node, error) {
+	var controllers []nodeGetter
+	for _, pool := range c.pools {
+		controllers = append(controllers, pool.matchController)
+	}
+	return getNodeFromControllers(nodeName, controllers)
+}
+
+func (c *Controller) annotationUpdater(log logrus.FieldLogger, getNodeFunc getNodeByNameFunc) annotationUpdateFunc {
 	return func(ctx context.Context, nodeName, ip string) error {
 		log := log.WithFields(logrus.Fields{
 			"ip":   ip,
 			"node": nodeName,
 		})
 
-		node, err := c.kubeCS.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		node, err := getNodeFunc(nodeName)
 		if err != nil {
+			c.log.WithError(err).Error("Unable to update annotation as Node not found in any known FloatingIpPool")
 			return fmt.Errorf("get node: %w", err)
 		}
 		currentAnnotationValue := node.Annotations[flipopv1alpha1.IPv4ReservedIPAnnotation]

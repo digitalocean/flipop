@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	v2 "k8s.io/client-go/listers/core/v1"
 	"reflect"
 	"sort"
 	"sync"
@@ -64,6 +65,7 @@ type Controller struct {
 	log          logrus.FieldLogger
 	kubeCS       kubernetes.Interface
 	nodeInformer cache.SharedIndexInformer
+	nodeLister   v2.NodeLister
 
 	wg     sync.WaitGroup
 	ctx    context.Context
@@ -200,6 +202,8 @@ func (m *Controller) run() {
 			}
 		},
 	)
+	m.nodeLister = v2.NewNodeLister(m.nodeInformer.GetIndexer())
+
 	m.nodeInformer.AddEventHandler(m)
 	m.wg.Add(1)
 	go func() {
@@ -489,6 +493,10 @@ func (m *Controller) OnDelete(obj interface{}) {
 	default:
 		m.log.Errorf("informer emitted unexpected type: %T", obj)
 	}
+}
+
+func (m *Controller) GetNodeByName(nodeName string) (*corev1.Node, error) {
+	return m.nodeLister.Get(nodeName)
 }
 
 type node struct {
