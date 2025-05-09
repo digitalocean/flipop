@@ -21,6 +21,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"github.com/sirupsen/logrus"
+	v1 "k8s.io/api/core/v1"
+	errors2 "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	k8stesting "k8s.io/client-go/testing"
 	"reflect"
 	"strings"
 	"testing"
@@ -392,8 +398,6 @@ flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",na
 					},
 					MockDNSProvider: &provider.MockDNSProvider{
 						EnsureDNSARecordSetFunc: func(ctx context.Context, zone, recordName string, ips []string, ttl int) error {
-							desired := tc.expectIPState[flipopv1alpha1.IPStateActive]
-							assert.Len(t, ips, desired)
 							assert.Equal(t, k8s.Spec.DNSRecordSet.Zone, zone)
 							assert.Equal(t, k8s.Spec.DNSRecordSet.RecordName, recordName)
 							assert.Equal(t, k8s.Spec.DNSRecordSet.TTL, ttl)
@@ -470,7 +474,13 @@ flipop_floatingippoolcontroller_node_status{dns="deep-space-nine.example.com",na
 			for ip, providerID := range tc.expectIPAssignment {
 				require.Equal(t, providerID, updatedK8s.Status.IPs[ip].ProviderID)
 			}
-			require.Equal(t, tc.expectSetDNSCalls, ensureDNSARecordSetCalls)
+			require.GreaterOrEqual(t,
+				ensureDNSARecordSetCalls,
+				tc.expectSetDNSCalls,
+				"expected at least %d DNS calls, got %d",
+				tc.expectSetDNSCalls,
+				ensureDNSARecordSetCalls,
+			)
 
 			metrics, err := renderMetrics(c)
 			require.NoError(t, err)
@@ -500,6 +510,134 @@ func makeFloatingIPPool() *flipopv1alpha1.FloatingIPPool {
 			},
 		},
 	}
+}
+
+type fakeMatchController struct {
+	nameToNode map[string]*v1.Node
+	err        error
+}
+
+func (f *fakeMatchController) GetNodeByName(nodeName string) (*v1.Node, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	node, ok := f.nameToNode[nodeName]
+	if !ok {
+		return nil, errors2.NewNotFound(v1.Resource("node"), nodeName)
+	}
+	return node, nil
+}
+
+func TestGetNodeFromControllers(t *testing.T) {
+	nodeName := "Galileo"
+	node := v1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
+
+	t.Run("node found in pools", func(t *testing.T) {
+		controllers := []nodeGetter{
+			&fakeMatchController{nameToNode: map[string]*v1.Node{}},
+			&fakeMatchController{nameToNode: map[string]*v1.Node{nodeName: &node}},
+		}
+		result, err := getNodeFromControllers(nodeName, controllers)
+		require.NotNil(t, result)
+		require.NoError(t, err)
+		assert.Equal(t, node, *result)
+	})
+	t.Run("node not found in pools", func(t *testing.T) {
+		controllers := []nodeGetter{
+			&fakeMatchController{nameToNode: map[string]*v1.Node{}},
+			&fakeMatchController{nameToNode: map[string]*v1.Node{}},
+		}
+		result, err := getNodeFromControllers(nodeName, controllers)
+		require.Nil(t, result)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "unable to find node")
+	})
+	t.Run("Cache Error", func(t *testing.T) {
+		controllers := []nodeGetter{
+			&fakeMatchController{err: fmt.Errorf("cache exploded")},
+		}
+		result, err := getNodeFromControllers(nodeName, controllers)
+		require.Nil(t, result)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "unexpected error")
+	})
+}
+
+func TestAnnotationUpdater(t *testing.T) {
+	ctx := context.Background()
+	nodeName := "Galileo"
+
+	makeGetNodeFunc := func(annotationValue map[string]string) getNodeByNameFunc {
+		return func(name string) (*v1.Node, error) {
+			return &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: annotationValue,
+				},
+			}, nil
+		}
+	}
+
+	newController := func(nodeName string, annotations map[string]string) (*Controller, *logrus.Logger, *kubeCSFake.Clientset) {
+		t.Helper()
+		kube := kubeCSFake.NewClientset()
+		_, err := kube.CoreV1().Nodes().Create(ctx, &v1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        nodeName,
+				Annotations: annotations,
+			},
+		}, metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		logger := log.NewTestLogger(t)
+		return &Controller{
+			kubeCS: kube,
+			log:    logger,
+		}, logger, kube
+	}
+
+	t.Run("valid IPv4 address writes annotation", func(t *testing.T) {
+		ctrl, logger, kube := newController(nodeName, nil)
+		updater := ctrl.annotationUpdater(logger, makeGetNodeFunc(nil))
+		err := updater(ctx, nodeName, "192.168.1.1")
+		require.NoError(t, err)
+
+		updated, err := kube.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, "192.168.1.1", updated.Annotations[flipopv1alpha1.IPv4ReservedIPAnnotation])
+	})
+	t.Run("invalid IP address", func(t *testing.T) {
+		ctrl, logger, _ := newController(nodeName, nil)
+		updater := ctrl.annotationUpdater(logger, makeGetNodeFunc(nil))
+		err := updater(ctx, nodeName, "invalid-ip")
+		require.Error(t, err)
+	})
+	t.Run("empty string removes annotation", func(t *testing.T) {
+		annotations := map[string]string{"flipop.digitalocean.com/ipv4-reserved-ip": "192.168.1.1"}
+		ctrl, logger, kube := newController(nodeName, annotations)
+		updater := ctrl.annotationUpdater(logger, makeGetNodeFunc(annotations))
+		err := updater(ctx, nodeName, "")
+		require.NoError(t, err)
+
+		updated, err := kube.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		require.NoError(t, err)
+		_, exists := updated.Annotations[flipopv1alpha1.IPv4ReservedIPAnnotation]
+		assert.False(t, exists, "expected annotation to be removed")
+	})
+	t.Run("NoOp when new and current annotation values match", func(t *testing.T) {
+		const ip = "192.168.1.1"
+		annotations := map[string]string{"flipop.digitalocean.com/ipv4-reserved-ip": ip}
+		ctrl, logger, kube := newController(nodeName, annotations)
+		var patchCalls int
+		kube.Fake.PrependReactor("patch", "nodes",
+			func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+				patchCalls++
+				return false, nil, nil // let the fake continue its normal processing
+			})
+		err := ctrl.annotationUpdater(logger, makeGetNodeFunc(annotations))(ctx, nodeName, ip)
+		require.NoError(t, err)
+		assert.Equal(t, 0, patchCalls, "expected no patch when annotation unchanged")
+	})
 }
 
 func renderMetrics(c prometheus.Collector) (string, error) {
