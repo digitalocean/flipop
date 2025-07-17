@@ -2,13 +2,12 @@ apiVersion: flipop.digitalocean.com/v1alpha1
 kind: FloatingIPPool
 metadata:
   name: ingress-pool
+  namespace: flipop
 spec: 
   provider: digitalocean
   region: nyc3
   desiredIPs: 3
-  ips:
-  - 192.168.1.1
-  - 192.168.2.1
+  ips: []
   dnsRecordSet:
     recordName: hello-world
     zone: example.com

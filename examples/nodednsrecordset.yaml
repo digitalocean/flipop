@@ -2,6 +2,7 @@ apiVersion: flipop.digitalocean.com/v1alpha1
 kind: NodeDNSRecordSet
 metadata:
   name: ingress-nodes
+  namespace: flipop
 spec: 
   provider: digitalocean
   dnsRecordSet:

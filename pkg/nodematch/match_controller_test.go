@@ -34,13 +34,13 @@ type mockNodeEnableDisabler struct {
 	nodes map[string]*corev1.Node
 }
 
-func (mned *mockNodeEnableDisabler) EnableNodes(nodes ...*corev1.Node) {
+func (mned *mockNodeEnableDisabler) EnableNodes(ctx context.Context, nodes ...*corev1.Node) {
 	for _, n := range nodes {
 		mned.nodes[n.Name] = n
 	}
 }
 
-func (mned *mockNodeEnableDisabler) DisableNodes(nodes ...*corev1.Node) {
+func (mned *mockNodeEnableDisabler) DisableNodes(ctx context.Context, nodes ...*corev1.Node) {
 	for _, n := range nodes {
 		delete(mned.nodes, n.Name)
 	}

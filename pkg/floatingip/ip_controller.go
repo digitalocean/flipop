@@ -47,6 +47,8 @@ type newIPFunc func(ctx context.Context, ips []string) error
 // statusUpdateFunc describes a callback when the ip/node assignment status should be updated.
 type statusUpdateFunc func(ctx context.Context, status flipopv1alpha1.FloatingIPPoolStatus) error
 
+type annotationUpdateFunc func(ctx context.Context, noneName, ip string) error
+
 type ipController struct {
 	provider    provider.IPProvider
 	dnsProvider provider.DNSProvider
@@ -91,6 +93,7 @@ type ipController struct {
 
 	updateStatus   bool
 	onStatusUpdate statusUpdateFunc
+	onAnnotate     annotationUpdateFunc
 
 	dns      *flipopv1alpha1.DNSRecordSet
 	dnsDirty bool
@@ -114,11 +117,12 @@ type retry struct {
 }
 
 // newIPController initializes an ipController.
-func newIPController(log logrus.FieldLogger, onNewIPs newIPFunc, onStatusUpdate statusUpdateFunc) *ipController {
+func newIPController(log logrus.FieldLogger, onNewIPs newIPFunc, onStatusUpdate statusUpdateFunc, onAnnotate annotationUpdateFunc) *ipController {
 	i := &ipController{
 		log:            log,
 		onNewIPs:       onNewIPs,
 		onStatusUpdate: onStatusUpdate,
+		onAnnotate:     onAnnotate,
 		pokeChan:       make(chan struct{}, 1),
 		now:            time.Now,
 	}
@@ -181,7 +185,7 @@ func (i *ipController) updateProviders(
 	return change
 }
 
-func (i *ipController) updateIPs(ips []string, desiredIPs int) {
+func (i *ipController) updateIPs(ctx context.Context, ips []string, desiredIPs int) {
 	i.lock.Lock()
 	defer i.lock.Unlock()
 	i.disabledIPs = nil
@@ -218,6 +222,11 @@ func (i *ipController) updateIPs(ips []string, desiredIPs int) {
 			if nodeName, ok := i.providerIDToNodeName[status.nodeProviderID]; ok {
 				log.WithField("node", nodeName).Warn("update removes ip assigned to active node")
 				i.assignableNodes.Add(status.nodeProviderID, true) // This node needs reassigned ASAP.
+				if i.onAnnotate != nil {
+					if err := i.onAnnotate(ctx, nodeName, ""); err != nil {
+						i.log.WithError(err).Error("updating Reserved IP annotation")
+					}
+				}
 			} else {
 				// We don't unassign IPs when DisableNodes is called, we just mark the ip as assignable.
 				log.Info("update removes ip assigned to inactive node")
@@ -307,21 +316,20 @@ func (i *ipController) reconcileDesiredIPs(ctx context.Context) {
 	for j := len(i.ips) + len(i.pendingIPs); j < i.desiredIPs; j++ {
 		i.log.Info("requesting ip from provider")
 		i.updateStatus = true
+		i.dnsDirty = true
 		ip, err := i.provider.CreateIP(ctx, i.region)
 		if err != nil {
 			i.createRetrySchedule = provider.ErrorToRetrySchedule(err)
 			i.createAttempts, i.createNextRetry = i.createRetrySchedule.Next(i.createAttempts)
 			i.retry(i.createNextRetry)
 			i.log.WithError(err).Error("requesting new IP from provider")
-			i.createError = fmt.Sprintf("creating new ip with provider: %s", err)
+			i.createError = fmt.Sprintf("creating new ip with provider: %.1000s", err)
 			return
 		}
 		i.log.WithField("ip", ip).Info("created new ip with provider")
 		i.pendingIPs = append(i.pendingIPs, ip)
 		i.createAttempts = 0
 		i.createError = ""
-		i.updateStatus = true
-		i.dnsDirty = true
 	}
 }
 
@@ -345,6 +353,7 @@ func (i *ipController) reconcilePendingIPs(ctx context.Context) {
 		}
 	}
 	i.updateStatus = true
+	i.dnsDirty = true
 	for _, ip := range i.pendingIPs {
 		// shortcut lookup for ip provider
 		i.ipToStatus[ip] = &ipStatus{
@@ -404,7 +413,7 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 				status.message = ""
 			} else {
 				status.state = flipopv1alpha1.IPStateError
-				status.message = fmt.Sprintf("retrieving IPs current provider ID: %s", err)
+				status.message = fmt.Sprintf("retrieving IPs current provider ID: %.1000s", err)
 			}
 			status.retrySchedule = provider.ErrorToRetrySchedule(err)
 			status.attempts, status.nextRetry = status.retrySchedule.Next(status.attempts)
@@ -412,6 +421,7 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 			log.WithError(err).Error("retrieving IPs current provider ID")
 			if originalState != status.state || originalMessage != status.message {
 				i.updateStatus = true
+				i.dnsDirty = true
 			}
 			continue
 		}
@@ -438,6 +448,12 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 				if isProviderIDActiveNode {
 					i.assignableNodes.Delete(providerID)
 					log.Info("ip address has existing assignment, reusing")
+					// Since the IP address is already assigned to the node we want to ensure the annotation reflects it as well.
+					if i.onAnnotate != nil {
+						if err := i.onAnnotate(ctx, i.providerIDToNodeName[providerID], ip); err != nil {
+							i.log.WithError(err).Error("updating Reserved IP annotation")
+						}
+					}
 				} else {
 					// The IP references a node we don't know about yet.
 					log.Info("ip address has existing assignment, but is available")
@@ -483,8 +499,8 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 		status.retrySchedule = healthyRetrySchedule
 		_, status.nextRetry = status.retrySchedule.Next(status.attempts)
 		if originalState != status.state || originalMessage != status.message {
-
 			i.updateStatus = true
+			i.dnsDirty = true
 		}
 		log.Debug("provider ip mapping verified")
 	}
@@ -562,10 +578,15 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 			delete(i.providerIDToRetry, providerID)
 			i.nextAssignment = i.now().Add(i.assignmentCoolOff)
 			status.assignments++
+			if i.onAnnotate != nil {
+				if err := i.onAnnotate(ctx, i.providerIDToNodeName[providerID], ip); err != nil {
+					i.log.WithError(err).Error("updating Reserved IP annotation")
+				}
+			}
 		} else {
 			status.state = flipopv1alpha1.IPStateError
 			status.retrySchedule = provider.ErrorToRetrySchedule(err)
-			status.message = fmt.Sprintf("assigning IP to node: %s", err)
+			status.message = fmt.Sprintf("assigning IP to node: %.1000s", err)
 			status.assignmentErrors++
 			log.WithError(err).Error("assigning IP to node")
 			if nRetry == nil {
@@ -577,10 +598,13 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 			i.providerIDToRetry[providerID] = nRetry
 			i.retry(nRetry.nextRetry)
 		}
+
+		i.dnsDirty = true
 		_, status.nextRetry = status.retrySchedule.Next(status.attempts)
 		i.retry(status.nextRetry)
 		if originalState != status.state || originalMessage != status.message {
 			i.updateStatus = true
+			i.dnsDirty = true
 		}
 	}
 }
@@ -589,8 +613,19 @@ func (i *ipController) reconcileDNS(ctx context.Context) {
 	if len(i.ips) == 0 || i.dns == nil || !i.dnsDirty {
 		return
 	}
-	i.log.WithField("ips", i.ips).Info("updating dns")
-	err := i.dnsProvider.EnsureDNSARecordSet(ctx, i.dns.Zone, i.dns.RecordName, i.ips, i.dns.TTL)
+	var assignedIPs []string
+	for _, ip := range i.ips {
+		if i.ipToStatus[ip].state == flipopv1alpha1.IPStateActive {
+			assignedIPs = append(assignedIPs, ip)
+		}
+	}
+	i.log.WithField("ips", assignedIPs).Info("updating dns")
+	if len(assignedIPs) == 0 {
+		// If there are no assigned IPs we should skip the update. Deleting the record will cause an NXDOMAIN with long TTL.
+		i.log.Warn("no IPs assigned; skipping DNS update to avoid NXDOMAIN w/ long TTL")
+		return
+	}
+	err := i.dnsProvider.EnsureDNSARecordSet(ctx, i.dns.Zone, i.dns.RecordName, assignedIPs, i.dns.TTL)
 	if err != nil {
 		i.log.WithError(err).Error("setting DNSRecordSet")
 		return
@@ -598,25 +633,32 @@ func (i *ipController) reconcileDNS(ctx context.Context) {
 	i.dnsDirty = false
 }
 
-func (i *ipController) DisableNodes(nodes ...*corev1.Node) {
+func (i *ipController) DisableNodes(ctx context.Context, nodes ...*corev1.Node) {
 	i.lock.Lock()
 	defer i.lock.Unlock()
+	var changed bool
+
 	for _, node := range nodes {
 		providerID := node.Spec.ProviderID
-		if providerID == "" {
-			continue
-		}
-
-		if _, ok := i.providerIDToNodeName[providerID]; !ok {
-			continue // Wasn't enabled
-		}
 		log := i.log.WithFields(logrus.Fields{
 			"node":        node.Name,
 			"provider_id": providerID,
 		})
-		i.updateStatus = true
+		// Skip if providerID not assigned as there is something unexcpeted going on with the node
+		if providerID == "" {
+			log.Warn("spec.providerID not set")
+			continue
+		}
+		// skip if not currently enabled
+		if _, ok := i.providerIDToNodeName[providerID]; !ok {
+			continue
+		}
+
+		// remove from enabled set
 		delete(i.providerIDToNodeName, providerID)
 		if ip := i.providerIDToIP[providerID]; ip != "" {
+			// node had an IP → unassign & annotate & mark DNS dirty
+
 			// Add this IP to the back of the list. This increases the chances that the IP mapping
 			// can be retained if the node recovers.
 			i.assignableIPs.Add(ip, false)
@@ -628,36 +670,55 @@ func (i *ipController) DisableNodes(nodes ...*corev1.Node) {
 			status.retrySchedule = provider.RetrySlow
 			_, status.nextRetry = status.retrySchedule.Next(status.attempts)
 			log.WithField("ip", ip).Info("node disabled; ip added to assignable list")
+			if i.onAnnotate != nil {
+				if err := i.onAnnotate(ctx, node.Name, ""); err != nil {
+					i.log.WithError(err).Error("updating Reserved IP annotation")
+				}
+			}
+
+			// Ensure DNS gets update to reflect this unassigned IP address
+			i.updateStatus = true
+			i.dnsDirty = true
+
 		} else {
+			// node did not have an IP address, no need to do DNS update
 			log.Info("node disabled")
 		}
-		i.assignableNodes.Delete(providerID)
+		// We remove the node from assignable node (since it's disabled)
 		// We leave the providerID<->IP mappings in providerIDToIP/ipStatus.nodeProviderID so we can
 		// reuse the IP mapping, if it's not immediately recovered.
+		i.assignableNodes.Delete(providerID)
+		// If we get here then a node has been disabled, and we need to run reconcile
+		changed = true
+	}
+	if changed {
 		i.poke()
 	}
 }
 
-func (i *ipController) EnableNodes(nodes ...*corev1.Node) {
+func (i *ipController) EnableNodes(ctx context.Context, nodes ...*corev1.Node) {
 	i.lock.Lock()
 	defer i.lock.Unlock()
+	var changed bool
 
 	for _, node := range nodes {
 		providerID := node.Spec.ProviderID
 		if providerID == "" {
 			continue
 		}
+		// skip if already marked enabled
 		if _, ok := i.providerIDToNodeName[providerID]; ok {
-			continue // Already enabled.
+			continue
 		}
-		i.poke()
-		i.updateStatus = true
+
+		// mark this node enabled
 		i.providerIDToNodeName[providerID] = node.Name
 		log := i.log.WithFields(logrus.Fields{
 			"node":        node.Name,
 			"provider_id": providerID,
 		})
 		if ip := i.providerIDToIP[providerID]; ip != "" {
+			// node already had an IP → re‑annotate & trigger DNS
 			log.WithField("ip", ip).Info("enabling node; already assigned to ip")
 			status := i.ipToStatus[ip]
 			status.nodeProviderID = providerID // should already be set.
@@ -666,11 +727,29 @@ func (i *ipController) EnableNodes(nodes ...*corev1.Node) {
 			status.retrySchedule = provider.RetryFast
 			status.attempts = 0
 			_, status.nextRetry = status.retrySchedule.Next(status.attempts)
+			// remove from assignableIPs so we don’t re‑assign it
 			i.assignableIPs.Delete(ip)
-			continue // Already has an IP.
+			// Since the IP address is already assigned to the node we want to ensure the annotation reflects it as well.
+			if i.onAnnotate != nil {
+				log.Warn("test")
+				if err := i.onAnnotate(ctx, i.providerIDToNodeName[providerID], ip); err != nil {
+					i.log.WithError(err).Error("updating Reserved IP annotation")
+				}
+			}
+			// Ensure DNS gets update to reflect this reused IP address
+			i.updateStatus = true
+			i.dnsDirty = true
+		} else {
+			// brand‑new node needs an IP, queue it—but DNS waits until assign
+			log.Info("enabling node; submitted to assignable node queue")
+			i.assignableNodes.Add(providerID, false)
 		}
-		log.Info("enabling node; submitted to assignable node queue")
-		i.assignableNodes.Add(providerID, false)
+		// If we get here then a node has been enabled, and we need to run reconcile
+		changed = true
+	}
+
+	if changed {
+		i.poke()
 	}
 }
 
@@ -748,7 +827,7 @@ func newOrderedSet() *orderedSet {
 }
 
 // Add v to the s, if it doesn't already exist. If front is true it will be
-// added/moved to the front, otherwise its added to the end.
+// added/moved to the front, otherwise it's added to the end.
 func (o *orderedSet) Add(v string, front bool) {
 	e, ok := o.m[v]
 	if ok {

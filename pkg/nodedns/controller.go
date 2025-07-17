@@ -111,7 +111,7 @@ func (c *Controller) Run(ctx context.Context) {
 }
 
 // OnAdd implements the shared informer ResourceEventHandler for NodeDNSRecordSets.
-func (c *Controller) OnAdd(obj interface{}) {
+func (c *Controller) OnAdd(obj interface{}, _ bool) {
 	nrs, ok := obj.(*flipopv1alpha1.NodeDNSRecordSet)
 	if !ok {
 		c.log.WithField("unexpected_type", fmt.Sprintf("%T", obj)).Warn("unexpected type")
@@ -301,7 +301,7 @@ func (d *dnsEnablerDisabler) metricLabels() prometheus.Labels {
 	}
 }
 
-func (d *dnsEnablerDisabler) EnableNodes(nodes ...*corev1.Node) {
+func (d *dnsEnablerDisabler) EnableNodes(ctx context.Context, nodes ...*corev1.Node) {
 	d.lock.Lock()
 	defer d.lock.Unlock()
 	for _, node := range nodes {
@@ -310,7 +310,7 @@ func (d *dnsEnablerDisabler) EnableNodes(nodes ...*corev1.Node) {
 	d.applyDNS()
 }
 
-func (d *dnsEnablerDisabler) DisableNodes(nodes ...*corev1.Node) {
+func (d *dnsEnablerDisabler) DisableNodes(ctx context.Context, nodes ...*corev1.Node) {
 	d.lock.Lock()
 	defer d.lock.Unlock()
 	for _, node := range nodes {
@@ -337,22 +337,31 @@ func (d *dnsEnablerDisabler) applyDNS() {
 	for _, node := range d.activeNodes {
 		var found bool
 		ll := ll.WithField("node", node.Name)
-		for _, addr := range node.Status.Addresses {
-			if addr.Type != addressType {
-				continue
+
+		if addressType == flipopv1alpha1.IPv4ReservedIPAnnotation {
+			reservedIP, ok := node.Annotations[flipopv1alpha1.IPv4ReservedIPAnnotation]
+			if ok {
+				ips = append(ips, reservedIP)
+				found = true
 			}
-			ip := net.ParseIP(addr.Address)
-			if ip == nil {
-				ll.WithField("address", addr.Address).Warn("Failed to parse IP")
-				continue
+		} else {
+			for _, addr := range node.Status.Addresses {
+				if addr.Type != addressType {
+					continue
+				}
+				ip := net.ParseIP(addr.Address)
+				if ip == nil {
+					ll.WithField("address", addr.Address).Warn("Failed to parse IP")
+					continue
+				}
+				ip = ip.To4()
+				if ip == nil {
+					ll.WithField("address", addr.Address).Warn("IPv6 addresses are NOT currently supported")
+					continue
+				}
+				ips = append(ips, ip.String())
+				found = true
 			}
-			ip = ip.To4()
-			if ip == nil {
-				ll.WithField("address", addr.Address).Warn("IPv6 addresses are NOT currently supported")
-				continue
-			}
-			ips = append(ips, ip.String())
-			found = true
 		}
 		if !found {
 			ll.Warn("matching node had no IPs of the expected type")
@@ -384,6 +393,7 @@ func (d *dnsEnablerDisabler) applyDNS() {
 		status.Error = fmt.Sprintf("Failed to update DNS: %s", err.Error())
 	} else {
 		ll.Info("DNS records updated")
+		ll.WithField("ips", ips).Debug("DNS record updated")
 		status.State = flipopv1alpha1.NodeDNSRecordActive
 	}
 	err = updateStatus(d.ctx, d.flipopCS, d.k8s.Name, d.k8s.Namespace, status)

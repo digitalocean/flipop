@@ -1,4 +1,4 @@
-GO_VERSION := 1.16
+GO_VERSION := 1.23.1
 COMMIT ?= $(shell git rev-parse --short HEAD)
 SHELL=/bin/bash -o pipefail
 
@@ -12,7 +12,7 @@ endif
 # for local development.
 dev-image:
 	docker build --no-cache -t flipop-dev -f Dockerfile.dev \
-		--build-arg=GO_IMAGE=docker.io/golang:$(GO_VERSION)-buster .
+		--build-arg=GO_IMAGE=golang:$(GO_VERSION) .
 
 generate-k8s:
 	docker run -v $$(pwd):/go/src/github.com/digitalocean/flipop/ \

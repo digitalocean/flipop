@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	v2 "k8s.io/client-go/listers/core/v1"
 	"reflect"
 	"sort"
 	"sync"
@@ -47,8 +48,8 @@ const (
 // NodeEnableDisabler describes a controller which can enable or disable sets of nodes, based
 // upon decisions reached by the node match controller.
 type NodeEnableDisabler interface {
-	EnableNodes(...*corev1.Node)
-	DisableNodes(...*corev1.Node)
+	EnableNodes(ctx context.Context, nodes ...*corev1.Node)
+	DisableNodes(ctx context.Context, nodes ...*corev1.Node)
 }
 
 // Controller watches Kubernetes nodes and pods and enables or disables them with the provided
@@ -64,6 +65,7 @@ type Controller struct {
 	log          logrus.FieldLogger
 	kubeCS       kubernetes.Interface
 	nodeInformer cache.SharedIndexInformer
+	nodeLister   v2.NodeLister
 
 	wg     sync.WaitGroup
 	ctx    context.Context
@@ -200,6 +202,8 @@ func (m *Controller) run() {
 			}
 		},
 	)
+	m.nodeLister = v2.NewNodeLister(m.nodeInformer.GetIndexer())
+
 	m.nodeInformer.AddEventHandler(m)
 	m.wg.Add(1)
 	go func() {
@@ -244,7 +248,7 @@ func (m *Controller) run() {
 		}
 	}
 	sort.Sort(byNodeName(enable)) // make this list reproducable
-	m.action.EnableNodes(enable...)
+	m.action.EnableNodes(m.ctx, enable...)
 	m.primed = true
 }
 
@@ -266,7 +270,7 @@ func (m *Controller) getNodePods(nodeName string) ([]*corev1.Pod, error) {
 }
 
 func (m *Controller) deleteNode(k8sNode *corev1.Node) {
-	m.action.DisableNodes(k8sNode)
+	m.action.DisableNodes(m.ctx, k8sNode)
 	delete(m.nodeNameToNode, k8sNode.Name)
 	return
 }
@@ -277,6 +281,9 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 		return nil
 	}
 	providerID := k8sNode.Spec.ProviderID
+	newReservedIP := k8sNode.Annotations[flipopv1alpha1.IPv4ReservedIPAnnotation]
+	var oldReservedIP string
+
 	log := m.log.WithFields(logrus.Fields{"node": k8sNode.Name, "node_provider_id": providerID})
 	n, ok := m.nodeNameToNode[k8sNode.Name]
 	if !ok {
@@ -288,6 +295,7 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 		m.nodeNameToNode[n.getName()] = n
 		log.Info("new node")
 	} else {
+		oldReservedIP = n.k8sNode.Annotations[flipopv1alpha1.IPv4ReservedIPAnnotation]
 		n.k8sNode = k8sNode
 		log.Debug("node updated")
 	}
@@ -295,10 +303,18 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 	var oldNodeMatch = n.isNodeMatch
 	n.isNodeMatch = m.isNodeMatch(n)
 
-	if oldNodeMatch == n.isNodeMatch {
-		log.Debug("node match unchanged")
+	// If the nodes match status and the reservedIP has not changed, then we ignore the update
+	if oldReservedIP == newReservedIP && oldNodeMatch == n.isNodeMatch {
+		log.WithFields(logrus.Fields{
+			"old_ip": oldReservedIP,
+			"new_ip": newReservedIP,
+		}).Debug("node match and reserved IP annotation unchanged")
 		return nil
 	}
+	log.WithFields(logrus.Fields{
+		"old_ip": oldReservedIP,
+		"new_ip": newReservedIP,
+	}).Debug("node match or reserved IP annotation changed")
 
 	if n.isNodeMatch && len(n.matchingPods) > 0 {
 		// We stop tracking pods when the node doesn't match.
@@ -319,13 +335,13 @@ func (m *Controller) updateNode(ctx context.Context, k8sNode *corev1.Node) error
 		log.Info("enabling node")
 		n.enabled = true
 		if m.primed {
-			m.action.EnableNodes(n.k8sNode)
+			m.action.EnableNodes(m.ctx, n.k8sNode)
 		}
 	} else {
 		log.Info("disabling node")
 		n.enabled = false
 		// This should be idempotent, so we don't need to care if we're primed yet.
-		m.action.DisableNodes(n.k8sNode)
+		m.action.DisableNodes(m.ctx, n.k8sNode)
 	}
 	return nil
 }
@@ -391,14 +407,14 @@ func (m *Controller) updatePod(pod *corev1.Pod) error {
 			log.Debug("enabling node; pod update met node match criteria")
 			n.enabled = true
 			if m.primed {
-				m.action.EnableNodes(n.k8sNode)
+				m.action.EnableNodes(m.ctx, n.k8sNode)
 			}
 		}
 	} else {
 		delete(n.matchingPods, podKey)
 		if len(n.matchingPods) == 0 {
 			log.Debug("disabling node; updated pod no longer meets node match criteria")
-			m.action.DisableNodes(n.k8sNode)
+			m.action.DisableNodes(m.ctx, n.k8sNode)
 		}
 	}
 	return nil
@@ -415,7 +431,7 @@ func (m *Controller) deletePod(pod *corev1.Pod) {
 	podKey := podNamespacedName(pod)
 	delete(n.matchingPods, podKey)
 	if len(n.matchingPods) == 0 {
-		m.action.DisableNodes(n.k8sNode)
+		m.action.DisableNodes(m.ctx, n.k8sNode)
 	}
 }
 
@@ -447,7 +463,7 @@ taintLoop:
 }
 
 // OnAdd implements the shared informer ResourceEventHandler for corev1.Pod & corev1.Node.
-func (m *Controller) OnAdd(obj interface{}) {
+func (m *Controller) OnAdd(obj interface{}, _ bool) {
 	m.OnUpdate(nil, obj)
 }
 
@@ -477,6 +493,10 @@ func (m *Controller) OnDelete(obj interface{}) {
 	default:
 		m.log.Errorf("informer emitted unexpected type: %T", obj)
 	}
+}
+
+func (m *Controller) GetNodeByName(nodeName string) (*corev1.Node, error) {
+	return m.nodeLister.Get(nodeName)
 }
 
 type node struct {

@@ -45,6 +45,10 @@ const (
 	NodeDNSRecordError NodeDNSRecordState = "error"
 )
 
+const (
+	IPv4ReservedIPAnnotation = "flipop.digitalocean.com/ipv4-reserved-ip"
+)
+
 // FloatingIPPoolSpec defines the desired state of FloatingIPPool.
 type FloatingIPPoolSpec struct {
 	// IPs is a list of floating IP addresses for assignment. IPs may be omitted or incomplete if
