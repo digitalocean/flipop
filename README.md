@@ -1,8 +1,8 @@
 # Floating IP Operator (FLIPOP)
 
-FLIPOP is a Kubernetes operator that manages cloud-native Floating IPs (also referred to as Reserved IPs), BYOIPs(Bring Your Own IPs) and DNS records for targeted nodes and pods. It provides advanced traffic steering for workloads—especially latency-sensitive or UDP traffic—where built-in Kubernetes LoadBalancer services may not suffice.
+FLIPOP is a Kubernetes operator that manages cloud-native Floating IPs (also referred to as Reserved IPs), BYOIPs (Bring Your Own IPs) and DNS records for targeted nodes and pods. It provides advanced traffic steering for workloads—especially latency-sensitive or UDP traffic—where built-in Kubernetes LoadBalancer services may not suffice.
 
-FLIPOP can be used to assign BYOIPs to K8s nodes by explicitly mentioning the list of BYOIPs in the `ips` list. If we mention just `desired_ips`, flipop will try to assign the Floating IPs.
+FLIPOP can be used to assign BYOIPs to K8s nodes by explicitly mentioning the list of BYOIPs in the `ips` list. If we mention just `desired_ips`, FLIPOP will try to assign the Floating IPs.
 ---
 
 ## Features
