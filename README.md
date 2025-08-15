@@ -1,12 +1,13 @@
 # Floating IP Operator (FLIPOP)
 
-FLIPOP is a Kubernetes operator that manages cloud-native Floating IPs (also referred to as Reserved IPs) and DNS records for targeted nodes and pods. It provides advanced traffic steering for workloads—especially latency-sensitive or UDP traffic—where built-in Kubernetes LoadBalancer services may not suffice.
+FLIPOP is a Kubernetes operator that manages cloud-native Floating IPs (also referred to as Reserved IPs), BYOIPs (Bring Your Own IPs) and DNS records for targeted nodes and pods. It provides advanced traffic steering for workloads—especially latency-sensitive or UDP traffic—where built-in Kubernetes LoadBalancer services may not suffice.
 
+FLIPOP can be used to assign BYOIPs to K8s nodes by explicitly mentioning the list of BYOIPs in the `ips` list. If we mention just `desired_ips`, FLIPOP will try to assign the Floating IPs.
 ---
 
 ## Features
 
-* Assign and unassign Floating IPs to Kubernetes nodes based on pod and node selectors.
+* Assign and unassign Floating IPs and BYOIPs to Kubernetes nodes based on pod and node selectors.
 * Manage DNS A records containing floating or node IPs.
 * Support for multiple DNS providers (e.g., DigitalOcean, Cloudflare).
 * Expose rich Prometheus metrics for observability.
@@ -63,7 +64,7 @@ spec:
 
 * Allocates a number of Floating IPs equal to `desiredIPs`.
   * By default, new floating IPs will be created
-  * If you wish to use existing Floating IPs specify them in the list of `ips`
+  * If you wish to use existing Floating IPs or BYOIPs specify them in the list of `ips`
 * Assigns IPs to matching nodes (see Matching section below)
 * Updates DNS A record (if configured) using FloatingIPPool’s reserved IPs by default.
   * Note this behavior is slightly different than how `NodeDNSRecordSet` works. `dnsRecordSet` will always update the DNS record with the nodes Floating IP address, where `NodeDNSRecordSet` must be configured to use the Floating IP address.
@@ -113,7 +114,7 @@ spec:
 
 ## Matching Behavior
 
-FLIPOP uses `spec.match` fields to determine which nodes receive Floating IPs:
+FLIPOP uses `spec.match` fields to determine which nodes receive Floating IPs or BYOIPs:
 
 1. **Pod Matching**: The controller watches pods in the specified `podNamespace` with labels matching `podLabel`. Only nodes running at least one matching pod are candidates.
 2. **Node Matching**: Nodes are filtered by `nodeLabel` and `tolerations`. If a node’s labels and taints match, it passes the node filter.
