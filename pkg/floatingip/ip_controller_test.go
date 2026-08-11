@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 
+	flipopv1alpha1 "github.com/digitalocean/flipop/pkg/apis/flipop/v1alpha1"
 	"github.com/digitalocean/flipop/pkg/log"
 	"github.com/digitalocean/flipop/pkg/provider"
 )
@@ -205,6 +206,21 @@ func TestIPControllerReconcileIPStatus(t *testing.T) {
 			expectAssignableNodes: []string{"mock://1"},
 		},
 		{
+			name:      "ip unassigned externally; node requeued",
+			ips:       []string{"192.168.1.1"},
+			responses: []ipToProviderIDRes{{ip: "192.168.1.1", providerID: ""}},
+			setup: func(i *ipController) {
+				i.providerIDToIP["mock://1"] = "192.168.1.1"
+				i.ipToStatus["192.168.1.1"] = &ipStatus{
+					nodeProviderID: "mock://1",
+				}
+				i.providerIDToNodeName["mock://1"] = "some-node"
+			},
+			expectProviderIDToIP:  map[string]string{},
+			expectAssignableIPs:   []string{"192.168.1.1"},
+			expectAssignableNodes: []string{"mock://1"},
+		},
+		{
 			name: "provider reports ip reassigned",
 			ips:  []string{"192.168.1.1", "172.16.2.2"},
 			responses: []ipToProviderIDRes{
@@ -369,18 +385,111 @@ func TestIPControllerReconcileAssignment(t *testing.T) {
 			},
 		},
 		{
-			name:                 "assignment error",
-			assignableIPs:        []string{"192.168.1.1"},
-			assignableNodes:      []string{"mock://1"},
-			expectProviderIDToIP: map[string]string{"mock://1": "192.168.1.1"},
-			responses:            []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1", err: errors.New("nope")}},
-			expectIPRetry:        true, // We always retry, because of assign
+			name:            "assignment error",
+			assignableIPs:   []string{"192.168.1.1"},
+			assignableNodes: []string{"mock://1"},
+			// The failed assignment must not leave a speculative claim behind, and both the
+			// IP and node must be requeued so assignment is retried after backoff.
+			expectProviderIDToIP:  map[string]string{},
+			responses:             []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1", err: errors.New("nope")}},
+			expectIPRetry:         true, // We always retry, because of assign
+			expectAssignableIPs:   []string{"192.168.1.1"},
+			expectAssignableNodes: []string{"mock://1"},
 			setup: func(i *ipController) {
 				i.ipToStatus["192.168.1.1"] = &ipStatus{}
 			},
 			eval: func(i *ipController) {
 				require.Equal(t, provider.RetrySlow, i.ipToStatus["192.168.1.1"].retrySchedule)
 				require.Contains(t, i.providerIDToRetry, "mock://1")
+				require.Empty(t, i.ipToStatus["192.168.1.1"].nodeProviderID)
+			},
+		},
+		{
+			name:                  "node in retry backoff is not attempted",
+			assignableIPs:         []string{"192.168.1.1"},
+			assignableNodes:       []string{"mock://1"},
+			expectProviderIDToIP:  map[string]string{},
+			responses:             nil, // AssignIP must NOT be called.
+			expectIPRetry:         true,
+			expectAssignableIPs:   []string{"192.168.1.1"},
+			expectAssignableNodes: []string{"mock://1"},
+			setup: func(i *ipController) {
+				i.ipToStatus["192.168.1.1"] = &ipStatus{}
+				i.now = func() time.Time { return fakeNow }
+				i.providerIDToRetry["mock://1"] = &retry{
+					attempts:      1,
+					nextRetry:     fakeNow.Add(30 * time.Second),
+					retrySchedule: provider.RetryFast,
+				}
+			},
+			eval: func(i *ipController) {
+				// The reconciler must wake when the node's backoff elapses.
+				require.Equal(t, fakeNow.Add(30*time.Second), i.nextRetry)
+			},
+		},
+		{
+			name:                 "node retry deadline elapsed; assignment attempted",
+			assignableIPs:        []string{"192.168.1.1"},
+			assignableNodes:      []string{"mock://1"},
+			expectProviderIDToIP: map[string]string{"mock://1": "192.168.1.1"},
+			responses:            []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1"}},
+			expectIPRetry:        true,
+			expectAnnotateCall:   &annotateCall{NodeName: "hello-world", IP: "192.168.1.1"},
+			setup: func(i *ipController) {
+				i.ipToStatus["192.168.1.1"] = &ipStatus{}
+				i.providerIDToNodeName["mock://1"] = "hello-world"
+				i.now = func() time.Time { return fakeNow }
+				i.providerIDToRetry["mock://1"] = &retry{
+					attempts:      1,
+					nextRetry:     fakeNow.Add(-time.Second),
+					retrySchedule: provider.RetryFast,
+				}
+			},
+			eval: func(i *ipController) {
+				require.NotContains(t, i.providerIDToRetry, "mock://1")
+			},
+		},
+		{
+			name:                  "ip in error backoff is not attempted",
+			assignableIPs:         []string{"192.168.1.1"},
+			assignableNodes:       []string{"mock://1"},
+			expectProviderIDToIP:  map[string]string{},
+			responses:             nil, // AssignIP must NOT be called.
+			expectIPRetry:         true,
+			expectAssignableIPs:   []string{"192.168.1.1"},
+			expectAssignableNodes: []string{"mock://1"},
+			setup: func(i *ipController) {
+				i.now = func() time.Time { return fakeNow }
+				i.ipToStatus["192.168.1.1"] = &ipStatus{
+					state: flipopv1alpha1.IPStateError,
+					retry: retry{
+						attempts:      1,
+						nextRetry:     fakeNow.Add(30 * time.Second),
+						retrySchedule: provider.RetryFast,
+					},
+				}
+			},
+		},
+		{
+			name:                 "healthy ip with future status check is assigned immediately",
+			assignableIPs:        []string{"192.168.1.1"},
+			assignableNodes:      []string{"mock://1"},
+			expectProviderIDToIP: map[string]string{"mock://1": "192.168.1.1"},
+			responses:            []assignIPRes{{ip: "192.168.1.1", providerID: "mock://1"}},
+			expectIPRetry:        true,
+			expectAnnotateCall:   &annotateCall{NodeName: "hello-world", IP: "192.168.1.1"},
+			setup: func(i *ipController) {
+				i.providerIDToNodeName["mock://1"] = "hello-world"
+				i.now = func() time.Time { return fakeNow }
+				// Healthy IPs carry a nextRetry for their periodic status check; this must
+				// not delay assignment.
+				i.ipToStatus["192.168.1.1"] = &ipStatus{
+					state: flipopv1alpha1.IPStateUnassigned,
+					retry: retry{
+						nextRetry:     fakeNow.Add(5 * time.Minute),
+						retrySchedule: healthyRetrySchedule,
+					},
+				}
 			},
 		},
 	}
