@@ -474,14 +474,18 @@ func (i *ipController) reconcileIPStatus(ctx context.Context) {
 					nodeProviderID: "", // reset
 				}
 			}
-			i.providerIDToIP[providerID] = ip
+			if providerID != "" {
+				i.providerIDToIP[providerID] = ip
+			}
 
 			delete(i.providerIDToIP, expectedProviderID)
-			if evictedNodeName, ok := i.providerIDToNodeName[providerID]; ok {
+			// If the node we expected to hold this IP is still active, it lost its IP (either
+			// removed externally, or claimed by another node) and needs a new one.
+			if evictedNodeName, ok := i.providerIDToNodeName[expectedProviderID]; ok {
 				log.WithFields(logrus.Fields{
 					"node": evictedNodeName,
-					"ip":   expectedIP,
-				}).Info("nodes ip was claimed by other node; marking for reassignment")
+					"ip":   ip,
+				}).Info("nodes ip was removed or claimed by other node; marking node for reassignment")
 				i.assignableNodes.Add(expectedProviderID, true)
 			}
 		}
@@ -531,9 +535,10 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 		ip := i.assignableIPs.Front()
 
 		// If this IP was previously involved in an error we shouldn't attempt to try again before
-		// its retry timestamp.
+		// its retry timestamp. Healthy IPs also carry a nextRetry timestamp (their periodic
+		// status check), which must not delay assignment.
 		status := i.ipToStatus[ip]
-		if !status.nextRetry.IsZero() && !status.nextRetry.After(now) {
+		if status.state == flipopv1alpha1.IPStateError && status.nextRetry.After(now) {
 			retryIPs = append(retryIPs, ip)
 			i.retry(status.nextRetry)
 			continue
@@ -544,7 +549,7 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 		// Similarly, if this node was involved in an error we should wait until after its retry
 		// timestamp has elapsed.
 		nRetry, ok := i.providerIDToRetry[providerID]
-		if ok && !nRetry.nextRetry.IsZero() && !nRetry.nextRetry.After(now) {
+		if ok && nRetry.nextRetry.After(now) {
 			retryIPs = append(retryIPs, ip)
 			retryProviders = append(retryProviders, providerID)
 			i.retry(nRetry.nextRetry)
@@ -597,6 +602,12 @@ func (i *ipController) reconcileAssignment(ctx context.Context) {
 			nRetry.attempts, nRetry.nextRetry = nRetry.retrySchedule.Next(nRetry.attempts)
 			i.providerIDToRetry[providerID] = nRetry
 			i.retry(nRetry.nextRetry)
+			// The assignment failed. Roll back the speculative claim recorded above, and requeue
+			// both the IP and the node so assignment is retried once their backoff elapses.
+			status.nodeProviderID = ""
+			delete(i.providerIDToIP, providerID)
+			retryIPs = append(retryIPs, ip)
+			retryProviders = append(retryProviders, providerID)
 		}
 
 		i.dnsDirty = true
@@ -731,7 +742,6 @@ func (i *ipController) EnableNodes(ctx context.Context, nodes ...*corev1.Node) {
 			i.assignableIPs.Delete(ip)
 			// Since the IP address is already assigned to the node we want to ensure the annotation reflects it as well.
 			if i.onAnnotate != nil {
-				log.Warn("test")
 				if err := i.onAnnotate(ctx, i.providerIDToNodeName[providerID], ip); err != nil {
 					i.log.WithError(err).Error("updating Reserved IP annotation")
 				}

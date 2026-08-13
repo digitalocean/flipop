@@ -209,6 +209,11 @@ func (do *digitalOcean) AssignIP(ctx context.Context, ip, providerID string) (er
 						return ErrNodeInUse
 					}
 				}
+				if isPendingEventError(err) {
+					// The droplet has another event in-flight (common during node rotation
+					// or provisioning). These resolve quickly; retry on the fast schedule.
+					return NewRetryError(err, RetryFast)
+				}
 			}
 		}
 		return err
@@ -288,6 +293,12 @@ func (do *digitalOcean) NodeToIP(ctx context.Context, providerID string) (_ stri
 	}
 
 	return "", nil
+}
+
+// isPendingEventError returns true if the error indicates the droplet already has an event
+// in-flight (API status 422, "Droplet already has a pending event").
+func isPendingEventError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "pending event")
 }
 
 // asyncStatus tries to abstract the asynchronous nature of DO's floating IP updates.

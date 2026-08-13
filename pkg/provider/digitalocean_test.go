@@ -19,6 +19,8 @@ package provider
 import (
 	"context"
 	"net"
+	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/digitalocean/godo"
@@ -30,6 +32,69 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestDigitalOceanAssignIP422Classification(t *testing.T) {
+	tcs := []struct {
+		name           string
+		message        string
+		expectSchedule RetrySchedule
+	}{
+		{
+			// A droplet with an event in-flight (e.g. during node rotation) rejects
+			// assignment with a 422. This resolves quickly and must be retried fast.
+			name:           "pending event retries fast",
+			message:        "Droplet already has a pending event.",
+			expectSchedule: RetryFast,
+		},
+		{
+			name:           "other 422 retries slow",
+			message:        "cannot assign a reserved IP to a droplet in a different region",
+			expectSchedule: RetrySlow,
+		},
+	}
+	for _, tc := range tcs {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			httpRes := &http.Response{
+				StatusCode: http.StatusUnprocessableEntity,
+				Request: &http.Request{
+					Method: http.MethodPost,
+					URL:    &url.URL{},
+				},
+			}
+			assignErr := &godo.ErrorResponse{
+				Response: httpRes,
+				Message:  tc.message,
+			}
+
+			ipActionsService := mock_godo.NewMockFloatingIPActionsService(ctrl)
+			ipActionsService.EXPECT().
+				Assign(gomock.Any(), "10.0.0.1", 12345).
+				Return(nil, &godo.Response{Response: httpRes}, assignErr)
+
+			// AssignIP consults the IP's current assignment before classifying the 422.
+			// Report it unassigned so classification falls through to the error itself.
+			ipsService := mock_godo.NewMockFloatingIPsService(ctrl)
+			ipsService.EXPECT().
+				Get(gomock.Any(), "10.0.0.1").
+				Return(&godo.FloatingIP{}, &godo.Response{}, nil)
+
+			do := &digitalOcean{
+				ipsService:        ipsService,
+				ipActionsService:  ipActionsService,
+				floatingIPActions: make(map[string]*doAction),
+				log:               log.NewTestLogger(t),
+			}
+			err := do.AssignIP(ctx, "10.0.0.1", "digitalocean://12345")
+			require.Error(t, err)
+			require.Equal(t, tc.expectSchedule, ErrorToRetrySchedule(err))
+		})
+	}
+}
 
 func TestDigitalOceanEnsureDNSARecordSet(t *testing.T) {
 	tcs := []struct {
